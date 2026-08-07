@@ -65,6 +65,8 @@ tags:
     description: Tenant SEO defaults for the central metadata renderer + public discovery/syndication surfaces (seo_distribution module, ADR-0038 discovery scope) — read/update site identity, default social/Organization images, Twitter handle, the tenant-wide noindex switch, and feed/sitemap config. The public robots.txt/sitemap/feed routes themselves are unauthenticated Astro XML/text routes (not part of this OpenAPI contract), host-resolved and cache-validated. config.update is high-risk (rewrites the public metadata/indexability surface), idempotency-keyed, and audited.
   - name: Form Drafts
     description: Generic, domain-agnostic server-side draft store for multi-step forms (form_drafts module) — tenant-scoped, RLS-protected create/read/update/submit/delete of an opaque JSONB payload plus the wizard coordinates needed to resume it. The payload is size-bounded and rejected outright (never silently redacted) when any key at any nesting depth resembles a secret — password/token/secret/credential/apiKey/privateKey — so a caller can never mistake a stripped field for a saved one. What a payload MEANS is owned by the module that created it (moduleKey/wizardKey), never by this one. submit is high-risk (it hands the payload to a domain action), idempotency-keyed, and audited; create deliberately is not, since a retry costs one deletable scratch row.
+  - name: Duty Travel
+    description: SiPerdin Dinkes Kobar duty travel module — tenant-scoped Surat Tugas and SPPD request workflow, Dinas/Faskes approval routing, locked document issuance, budget verification for SPPD, evidence/report submission, dashboard counters, and audited high-risk state transitions.
   - name: Site Search
     description: "Tenant-scoped, cross-content PostgreSQL full-text search over PUBLISHED public website content (site_search module, ADR-0040) — the public, anonymous, host-resolved query/suggest endpoints plus the admin index status/reconcile/rebuild, tenant search configuration, and failed-item diagnostics API. The index is a projection of public content only and is NEVER an authorization source: publication state is enforced at the source-to-index boundary, so a draft/private/deleted/scheduled resource is never even read into it. Query text is always a bound parameter into websearch_to_tsquery (no SQL injection) and snippets are HTML-escaped before the <mark> highlights are inserted (no XSS). index.rebuild is high-risk (delete + re-extract every document); index.reconcile is an idempotent, fully regenerable sync — both are idempotency-keyed and audited, as is settings.update, which changes what the public surface returns."
   - name: Comments
@@ -6070,6 +6072,152 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/duty-travel/dashboard/summary:
+    get:
+      operationId: getDutyTravelDashboardSummary
+      tags:
+        - Duty Travel
+      summary: Read dashboard summary counters for the active tenant.
+      responses:
+        "200":
+          description: Dashboard counters.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                      - true
+                  data:
+                    $ref: "#/components/schemas/DutyTravelDashboardSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/duty-travel/requests:
+    get:
+      operationId: listDutyTravelRequests
+      tags:
+        - Duty Travel
+      summary: List duty travel requests for the active tenant.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/DutyTravelRequestStatus"
+        - name: requestKind
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/DutyTravelRequestKind"
+      responses:
+        "200":
+          description: Duty travel request list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                      - true
+                  data:
+                    type: object
+                    properties:
+                      requests:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/DutyTravelRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createDutyTravelRequest
+      tags:
+        - Duty Travel
+      summary: Create a draft duty travel request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DutyTravelRequestCreate"
+      responses:
+        "200":
+          description: Created draft request.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                      - true
+                  data:
+                    $ref: "#/components/schemas/DutyTravelRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/duty-travel/requests/{id}/submit:
+    post:
+      operationId: submitDutyTravelRequest
+      tags:
+        - Duty Travel
+      summary: Submit a draft or returned request into approval workflow.
+      description: High-risk state transition; requires Idempotency-Key.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+      responses:
+        "200":
+          description: Submitted request.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                      - true
+                  data:
+                    $ref: "#/components/schemas/DutyTravelRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The Idempotency-Key was reused with a different request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /api/v1/email/announcements:
     post:
       tags:
@@ -16453,6 +16601,120 @@ components:
         reason:
           type: string
           description: Non-empty soft-delete reason (audited).
+    DutyTravelDashboardSummary:
+      type: object
+      properties:
+        totalRequests:
+          type: integer
+          minimum: 0
+        pendingApprovals:
+          type: integer
+          minimum: 0
+        issuedDocuments:
+          type: integer
+          minimum: 0
+        overdueEvidence:
+          type: integer
+          minimum: 0
+    DutyTravelRequest:
+      type: object
+      required:
+        - id
+        - requestKind
+        - requestScope
+        - status
+        - title
+        - startsOn
+        - endsOn
+      properties:
+        id:
+          type: string
+          format: uuid
+        requestKind:
+          $ref: "#/components/schemas/DutyTravelRequestKind"
+        requestScope:
+          $ref: "#/components/schemas/DutyTravelRequestScope"
+        status:
+          $ref: "#/components/schemas/DutyTravelRequestStatus"
+        title:
+          type: string
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        isUrgent:
+          type: boolean
+    DutyTravelRequestCreate:
+      type: object
+      required:
+        - requestKind
+        - requestScope
+        - title
+        - basis
+        - purpose
+        - expectedOutput
+        - startsOn
+        - endsOn
+      properties:
+        requestKind:
+          $ref: "#/components/schemas/DutyTravelRequestKind"
+        requestScope:
+          $ref: "#/components/schemas/DutyTravelRequestScope"
+        title:
+          type: string
+          minLength: 3
+          maxLength: 200
+        basis:
+          type: string
+          minLength: 1
+        purpose:
+          type: string
+          minLength: 1
+        expectedOutput:
+          type: string
+          minLength: 1
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        isUrgent:
+          type: boolean
+        urgentReason:
+          type: string
+    DutyTravelRequestKind:
+      type: string
+      enum:
+        - task_only
+        - task_with_sppd
+    DutyTravelRequestScope:
+      type: string
+      enum:
+        - dinkes
+        - faskes
+    DutyTravelRequestStatus:
+      type: string
+      enum:
+        - draft
+        - submitted
+        - returned
+        - rejected
+        - supervisor_verified
+        - technical_verified
+        - secretary_verified
+        - finance_verified
+        - final_approved
+        - document_issued
+        - in_progress
+        - evidence_submitted
+        - evidence_returned
+        - evidence_verified
+        - completed
+        - archived
+        - cancelled
     FinalizeNewsMediaUploadSessionRequest:
       type: object
       additionalProperties: false

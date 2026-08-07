@@ -214,3 +214,17 @@ intentionalDivergences:
     reviewDate: "2027-08-01"
     adr: 0049-machine-credentials-and-session-introspection.md
     since: "ADR-0049"
+  - id: duty-travel-domain-module-built-here
+    summary: >-
+      awcms ships the SiPerdin Dinkes Kobar `duty_travel` domain module directly
+      in `src/modules/`, including tenant-scoped schema, permissions, and API
+      contracts.
+    reason: >-
+      The PRD targets an operational Dinas/Faskes duty travel application on the
+      awcms ERP/back-office template. ADR-0034 removed the derived/plugin
+      pathway, and ADR-0047 freezes mini/micro as references, so the module is
+      intentionally built here rather than as an awcms-micro plugin package.
+    owner: "@ahliweb"
+    reviewDate: "2027-08-02"
+    adr: 0034-awcms-family-direct-use-templates-and-derived-pathway-removal.md
+    since: "SiPerdin Fase 1 MVP"

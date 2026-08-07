@@ -20,6 +20,7 @@ import { formDraftsModule } from "./form-drafts/module";
 import { siteSearchModule } from "./site-search/module";
 import { commentsModule } from "./comments/module";
 import { idnAdminRegionsModule } from "./idn-admin-regions/module";
+import { dutyTravelModule } from "./duty-travel/module";
 
 /**
  * The reviewed BASE registry. Every module below is reviewed, in-repo code.
@@ -139,7 +140,13 @@ const baseModules: ModuleDescriptor[] = [
   // no `tenant_id`/RLS and are instead registered in
   // `GLOBAL_TABLE_FORBIDDEN_PRIVILEGES` with per-role privileges spelled out.
   // See src/modules/idn-admin-regions/module.ts's `description`.
-  idnAdminRegionsModule
+  idnAdminRegionsModule,
+  // SiPerdin Dinkes Kobar domain module: built directly in this template per
+  // ADR-0034/0035/0047, not as an awcms-micro plugin package. Listed after the
+  // reusable foundation modules it consumes (`workflow`, `form_drafts`,
+  // `media_library`, `reporting`, `domain_event_runtime`, `logging`) so the
+  // lifecycle DAG remains explicit and acyclic.
+  dutyTravelModule
 ];
 
 /**

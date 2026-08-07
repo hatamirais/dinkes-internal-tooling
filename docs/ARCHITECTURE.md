@@ -8,7 +8,7 @@ yang di-ship, base menyediakan **modul fondasi reusable + kontrak netral kesiapa
 modul domain ERP (finance, inventory, procurement, manufacturing, hr-payroll, dst.)
 **ditambahkan langsung di `src/modules/` template ini** saat dipakai, bukan di repo
 ekstensi/turunan terpisah (jalur aplikasi-turunan DIHAPUS — lihat §Komposisi modul di
-bawah). Repo ini punya **21 modul aktif**, migration `sql/001`-`sql/083`, RLS
+bawah). Repo ini punya **22 modul aktif**, migration `sql/001`-`sql/085`, RLS
 `FORCE` di seluruh tabel tenant-scoped, pemisahan role database, dan admin UI read+write
 (Issue #166, #171). Dokumen ini menjelaskan apa yang **ada di kode saat ini**. Untuk detail
 per modul, lihat `README.md` masing-masing di `src/modules/<module>/`.
@@ -30,7 +30,7 @@ src/modules/<module>/
   api/                  # (opsional) skema/handler bersama; route file tetap di src/pages
 ```
 
-21 modul terdaftar di `src/modules/index.ts` (urutan = urutan registrasi):
+22 modul terdaftar di `src/modules/index.ts` (urutan = urutan registrasi):
 
 - **`logging`** — audit trail lintas modul (`awcms_audit_events`) + purge terjadwal.
 - **`tenant_admin`** — tenant root, hierarki office, tenant settings, setup wizard sekali jalan.
@@ -58,6 +58,8 @@ src/modules/<module>/
 - **`comments`** (`type: "domain"`) — di-port dari micro ([ADR-0041](adr/0041-comments-module-admission.md), `sql/066`-`sql/067`): komentar **moderation-first** di atas resource yang **sudah terbit & publik**. Memiliki thread, komentar ber-kedalaman-terbatas (hard cap 4), riwayat moderasi append-only, laporan penyalahgunaan, setting per-tenant, telemetri anti-abuse terminimalisasi, dan langganan notifikasi-balasan terenkripsi. **Konsumen/agregator** descriptor `commentableResources` (`MODULE_CONTRACT_VERSION` 2.3.0) — modul konten MENDEKLARASIKAN resource mana yang boleh dikomentari; `comments` menemukannya lewat `listModules()`. Tulang punggung keamanannya: batas publikasi ditegakkan di perbatasan resource→thread (draft/privat/terhapus tak pernah menerima maupun mengekspos komentar); body disimpan **teks polos** dan di-escape saat render (tak ada HTML tersimpan → tak ada XSS tersimpan), hanya autolink http(s) `rel="nofollow ugc noopener noreferrer"`; respons submit publik **seragam** sehingga endpoint tak bisa dipakai sebagai oracle blocked-term atau konten belum-terbit; PII penulis diminimalkan (sha256 + mask, tak pernah mentah). Notifikasi balasan lewat outbox event (payload tanpa alamat), retensi meng-**anonimkan** di tempat (bukan menghapus) dan menghormati legal hold. Admin `/admin/comments` + API `/api/v1/comments/*`.
 
 - **`idn-admin-regions`** (`type: "system"`) — dirintis langsung di sini ([ADR-0046](adr/0046-idn-admin-regions-module-admission.md), #312, `sql/080` skema + `sql/081` permission): master data wilayah administratif Indonesia (provinsi/kabupaten-kota/kecamatan/desa-kelurahan) **ber-versi & ter-provenance**, disumber dari dataset komunitas `cahyadsn/wilayah` (MIT) yang di-**vendor** di `data/idn-admin-regions/`. Dua tabelnya (`awcms_idn_region_datasets`, `awcms_idn_admin_regions`) **GLOBAL** — tanpa `tenant_id`, tanpa RLS, seperti `awcms_permissions`/`awcms_modules` — karena provinsi "Aceh" adalah baris yang sama untuk setiap tenant; keduanya terdaftar di `GLOBAL_TABLE_FORBIDDEN_PRIVILEGES` (`scripts/security-readiness.ts`) sehingga privilese per-role wajib dideklarasikan eksplisit, bukan diwarisi DML massal. Yang global adalah **barisnya**, bukan izinnya: setiap endpoint tetap melewati sesi + konteks tenant + ABAC default-deny. Impor 91.599 baris adalah **job deployment** (`bun run idn-regions:import`, dry-run secara default, berjalan sebagai `awcms_worker`) — bukan panggilan HTTP; sedangkan **aktivasi/rollback** versi dataset adalah keputusan jalur-request sehingga ABAC-gated, ber-idempotency-key, dan ter-audit. Lookup baca-saja di `/api/v1/idn-regions/*`. Belum punya `navigation`: layar operator platformnya milik `awcms-astro` ([ADR-0048](adr/0048-frontend-role-split-awcms-astro-internal-admin.md)).
+
+- **`duty-travel`** (`type: "domain"`, experimental) — modul SiPerdin Dinkes Kobar Fase 1 MVP yang dirintis langsung di repo ini (`sql/084` skema + `sql/085` permission): pengajuan Surat Tugas tanpa biaya dan ST + SPPD, lifecycle approval Dinas/Faskes, penomoran/template dokumen, budget line SPPD, bukti/laporan hasil tugas, dashboard counter dasar, dan endpoint awal `/api/v1/duty-travel/*`. Semua tabel bisnisnya tenant-scoped + `FORCE RLS`; high-risk submit memakai `Idempotency-Key` dan audit. Belum punya `navigation`: layar admin tenant `/admin/duty-travel*` akan ditambahkan setelah API/domain foundation stabil.
 
 Modul lain di ekosistem keluarga (mis. `newsletter`,
 `social-publishing`, `document-infrastructure`, `integration-hub`)

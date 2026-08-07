@@ -1,5 +1,5 @@
 {
-  "moduleCount": 21,
+  "moduleCount": 22,
   "valid": true,
   "issueCount": 0,
   "modules": [
@@ -88,6 +88,42 @@
       "hasHealthCheck": false,
       "hasReadinessCheck": false,
       "deploymentProfiles": null
+    },
+    {
+      "key": "duty_travel",
+      "name": "Duty Travel",
+      "version": "0.1.0",
+      "status": "experimental",
+      "type": "domain",
+      "dependencies": [
+        "tenant_admin",
+        "identity_access",
+        "logging",
+        "domain_event_runtime",
+        "workflow",
+        "form_drafts",
+        "media_library",
+        "reporting"
+      ],
+      "capabilitiesProvided": [],
+      "capabilitiesConsumed": [
+        {
+          "capability": "media_library",
+          "providedBy": "media_library",
+          "optional": true
+        }
+      ],
+      "permissionCount": 18,
+      "navigationCount": 0,
+      "jobCount": 0,
+      "hasHealthCheck": false,
+      "hasReadinessCheck": false,
+      "deploymentProfiles": [
+        "development",
+        "staging",
+        "production",
+        "offline-lan"
+      ]
     },
     {
       "key": "email",

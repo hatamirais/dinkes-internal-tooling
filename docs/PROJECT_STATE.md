@@ -60,8 +60,8 @@ Model tata kelola dipakai-langsung/tanpa-repo-turunan (ADR-0034 §2/§3) **tidak
 | Aspek      | Nilai (per commit ini)                                                    | Sumber kebenaran                                      |
 | ---------- | ------------------------------------------------------------------------- | ----------------------------------------------------- |
 | Versi      | **6.4.0** (2026-07-26); 0 changeset menunggu                              | `package.json`, `CHANGELOG.md`, tag `v*`              |
-| Modul base | **21** (lihat daftar di ARCHITECTURE.md)                                  | `src/modules/index.ts`                                |
-| Migrasi    | **83** (`sql/001`–`083`)                                                  | `ls sql/`                                             |
+| Modul base | **22** (lihat daftar di ARCHITECTURE.md)                                  | `src/modules/index.ts`                                |
+| Migrasi    | **85** (`sql/001`–`085`)                                                  | `ls sql/`                                             |
 | ADR        | **0000**–**0050** (`0000` = template)                                     | `docs/adr/README.id.md` (indeks ter-gate)             |
 | Kontrak    | OpenAPI modular per-modul + AsyncAPI; `MODULE_CONTRACT_VERSION` **2.4.0** | `openapi/`, `asyncapi/`, `_shared/module-contract.ts` |
 
@@ -76,12 +76,12 @@ Model tata kelola dipakai-langsung/tanpa-repo-turunan (ADR-0034 §2/§3) **tidak
 > job pause di "Waiting for review" sebelum sign/attest/publish (lihat
 > [`release-process.md`](awcms/release-process.md) §Environment approval).
 
-Modul (21, urutan `src/modules/index.ts`): `logging`, `tenant-admin`,
+Modul (22, urutan `src/modules/index.ts`): `logging`, `tenant-admin`,
 `profile-identity`, `identity-access`, `module-management`, `domain-event-runtime`,
 `sync-storage`, `workflow-approval`, `email`, `reporting`, `theming`,
 **`media-library`**, `blog-content`, **`tenant-domain`**, **`visitor-analytics`**,
 **`data-lifecycle`**, **`seo-distribution`**, **`form-drafts`**, **`site-search`**,
-**`comments`**, `idn-admin-regions`.
+**`comments`**, `idn-admin-regions`, `duty-travel`.
 (Delapan yang di-bold = gelombang penyerapan awcms-micro, 2026-07-24/25 — lihat §3/§4.
 `news-portal` **tidak lagi ada**: dilebur ke `blog-content` oleh
 [ADR-0044](adr/0044-merge-news-portal-into-blog-content.md), #300.
@@ -94,7 +94,7 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
 
 ## 3. Yang sudah selesai (jangan dibangun ulang)
 
-- **21 modul** aktif dengan RLS `FORCE`, pemisahan role DB
+- **22 modul** aktif dengan RLS `FORCE`, pemisahan role DB
   (`awcms_app`/`awcms_worker`/`awcms_setup`), admin SSR read+write (Issue #166/#171).
 - **Auth lanjutan**: MFA TOTP + session-assurance/step-up (`sql/024`), OIDC/SSO
   tenant-aware + SSRF guard + break-glass (`sql/025`/`026`), Turnstile bot protection
@@ -203,6 +203,12 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
 - **Kredensial mesin baca-saja + introspeksi sesi** ([ADR-0049](adr/0049-machine-credentials-and-session-introspection.md),
   `sql/082` skema + `sql/083` permission) — bearer KEDUA yang bukan sesi manusia, terikat
   ke satu service account. Rinci di §4 dan di `src/modules/identity-access/README.md`.
+- **`duty-travel` / SiPerdin Dinkes Kobar** (`sql/084` skema + `sql/085` permission) —
+  modul domain Fase 1 MVP yang dibangun langsung di `src/modules/`: request ST tanpa biaya
+  dan ST+SPPD, lifecycle approval, dokumen, budget line, bukti/laporan, dashboard counter
+  awal, OpenAPI fragment, dan endpoint awal `/api/v1/duty-travel/*`. Dicatat sebagai
+  divergence sengaja di `awcms-family-compatibility.yaml` karena dibangun di sini selama
+  freeze ADR-0047.
 - **Dua environment ter-deploy nyata** — produksi `awcms.ahlikoding.com`, staging
   `awcms-staging.ahlikoding.com` (Coolify, host yang sama, DB & secret terpisah). Staging
   ter-migrasi penuh (69) dan berjalan sebagai role least-privilege terpisah. Rincian,
