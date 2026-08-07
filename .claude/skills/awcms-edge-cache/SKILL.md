@@ -46,14 +46,33 @@ ketiga yang senyap.
 ## Jebakan yang sudah ditemukan (jangan diulang)
 
 - **Purge untuk modul TANPA surface ter-deklarasi tidak cocok dengan apa pun.**
-  Objek ter-cache hanya bertanda key modul PEMILIK surface — hari ini cuma
-  `blog_content` dan `theming` (`news_portal` DILEBUR ke `blog_content` —
-  ADR-0044/#300). Meng-enqueue `m:news_portal` atau
-  `m:media_library` menghasilkan ban yang tidak cocok dengan objek mana pun
-  sementara antrean melaporkan `sent=1`. Jangan tambahkan "untuk jaga-jaga".
+  Objek ter-cache hanya bertanda key modul PEMILIK surface — hari ini
+  `blog_content`, `theming`, dan `seo_distribution` (ADR-0061 §B; `news_portal`
+  DILEBUR ke `blog_content` — ADR-0044/#300). Meng-enqueue `m:media_library`
+  menghasilkan ban yang tidak cocok dengan objek mana pun sementara antrean
+  melaporkan `sent=1`. Jangan tambahkan "untuk jaga-jaga".
   Gate `edge-cache:surfaces:check` menuntut emisi purge dari setiap modul yang
   MEMILIKI surface, jadi kewajibannya muncul otomatis pada hari surface-nya
   dideklarasikan — dan tidak sedetik lebih awal.
+
+- **Surface bisa punya DUA penulis, dan `moduleKey` hanya menampung satu**
+  (ADR-0061 §B). Badan `/sitemap.xml` dan `/feed.xml` dimiliki
+  `seo_distribution` tetapi DIISI setiap penyedia `seo_facts`, jadi menerbitkan
+  post mengubahnya tanpa menyentuh satu baris pun milik pemiliknya.
+  `enqueueModuleContentPurge` karena itu juga mem-purge modul yang
+  mendeklarasikan `consumes` terhadap modul yang berubah DAN memiliki surface —
+  dibaca dari REGISTRY (`resolveDerivedSurfaceModuleKeys`), jadi `blog_content`
+  tak pernah menyebut `seo_distribution`. Saat menambah surface agregat baru,
+  tanyakan "siapa lagi yang menulis badan ini?" sebelum memilih `moduleKey`.
+
+- **Waktu mempublikasikan tenant adalah pertanyaan DISCLOSURE** (ADR-0061 §3).
+  404 boleh di-cache, jadi rute host-resolved yang mempublikasikan
+  `locals.edgeCacheTenantId` SEBELUM cabang "resource tidak ada" membuat 404
+  resource-hilang ber-`Surrogate-Control` sementara 404 host-tak-dikenal
+  ber-`private, no-store` — menjawab "apakah hostname ini tenant hidup?" dari
+  SATU permintaan. Publikasikan HANYA pada jalur yang menyajikan; dijaga
+  `tests/news-routes-edge-cache-contract.test.ts` +
+  `tests/discovery-routes-edge-cache-contract.test.ts`.
 
 - **Bun TIDAK mengirim method HTTP non-standar.** `fetch`/`node:http` dengan
   `method: "BAN"` tiba di Varnish sebagai **`GET`** (diverifikasi Bun 1.3.14 lewat
@@ -114,6 +133,19 @@ ketiga yang senyap.
   benar-benar mem-prune baris `done`. Baris `failed` sengaja TIDAK di-prune — itu
   satu-satunya jejak bahwa invalidasi tak pernah mendarat.
 
+## Tier di ATAS Varnish (Cloudflare)
+
+Topologi ter-deploy menaruh Cloudflare (proxied) di depan:
+`Cloudflare -> Traefik -> Varnish -> app`. `EDGE_CACHE_PURGE_ENDPOINT` hanya
+menjangkau **Varnish** — purge/ban tidak menyentuh cache Cloudflare, padahal
+yang menjawab pembaca adalah Cloudflare (`cf-cache-status: HIT` bahkan saat
+aplikasi menandai skip). Ini celah C14 di
+[`docs/awcms/standar-performa-dan-keamanan.md`](../../../docs/awcms/standar-performa-dan-keamanan.md) §9.
+Konsekuensinya: saat men-debug konten basi, ukur `cf-cache-status`/`age` dari
+sisi Cloudflare, bukan hanya `X-Cache` Varnish; dan kebasian di tier itu hanya
+berbatas `s-maxage`, bukan purge. Materi debug lengkap: skill `awcms-deploy`
+butir "cf-cache-status".
+
 ## Perintah
 
 ```bash
@@ -124,15 +156,18 @@ bun run security:readiness          # checkEdgeCacheConfigured: endpoint-tanpa-t
 
 ## Belum ada (jangan klaim ada)
 
-- **Emisi purge dari event konten.** `enqueueEdgeCachePurge` siap dipanggil,
-  **belum ada pemanggilnya**. Invalidasi saat ini bergantung TTL.
-- **Surface discovery ber-resolusi-host** (`/robots.txt`, `/sitemap.xml`,
-  `/feed.xml`, `/atom.xml`, `/feed.json`) — `serveDiscovery` tak menerima
-  `locals`, jadi rute tak bisa mempublikasikan tenant-nya.
+- ~~Emisi purge dari event konten.~~ **SUDAH** — `blog_content`
+  (create/update/soft-delete/scheduled publish), `theming`
+  (publish/rollback/retire), `seo_distribution` (`PUT /api/v1/seo/config`).
+- ~~Surface discovery ber-resolusi-host~~ **SUDAH** (ADR-0061 §B):
+  `seo-robots` (600s), `seo-sitemap` (300s, indeks + anak `-{n}`), `seo-feed`
+  (300s, RSS/Atom/JSON, `?locale=`). Keluarga `/news/**` juga (ADR-0061 §A:
+  `news-index`/`news-taxonomy`/`news-post`). **11 surface** ter-deklarasi.
+- **Daftar publik komentar** (`GET /api/v1/comments`) — kandidat sah, ditunda.
 - **Purge lewat UI admin atau endpoint HTTP.** Hanya antrean + worker.
 
 ## Skill terkait
 
 `awcms-new-migration` (grant worker + RLS FORCE), `awcms-new-endpoint`,
 `awcms-seo-distribution` (validator ETag — mekanisme berbeda, lihat tabel di
-docs), `awcms-blog-content` dan `awcms-theming` (pemilik surface yang di-cache).
+docs), `awcms-blog-content`, `awcms-theming` dan `awcms-seo-distribution` (ketiga pemilik surface yang di-cache).

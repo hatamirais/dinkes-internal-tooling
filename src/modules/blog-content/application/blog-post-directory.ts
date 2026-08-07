@@ -240,6 +240,13 @@ export async function fetchBlogPostById(
 
 export type ListBlogPostsFilter = {
   status?: BlogContentStatus;
+  /**
+   * Exact match on `awcms_blog_posts.locale`. Absent means every locale — the
+   * pre-existing behaviour, and still the right default for the admin table,
+   * where hiding a translation because the operator did not name its language
+   * would be the surprising answer.
+   */
+  locale?: string;
   limit?: number;
 };
 
@@ -279,6 +286,7 @@ export async function listBlogPostsPage(
   tenantId: string,
   options: {
     status?: BlogContentStatus;
+    locale?: string;
     limit?: number;
     cursor?: KeysetCursor | null;
   } = {}
@@ -292,10 +300,12 @@ export async function listBlogPostsPage(
   const cursorCreatedAt = options.cursor?.createdAt ?? null;
   const cursorId = options.cursor?.id ?? null;
   const status = options.status ?? null;
+  const locale = options.locale ?? null;
 
   // One statement for both filtered and unfiltered: `${status}::text IS NULL`
   // keeps the plan shape identical and stops this from growing a fourth
-  // near-identical copy of the same SELECT as filters accumulate.
+  // near-identical copy of the same SELECT as filters accumulate. `locale`
+  // joined the same way for the same reason.
   const rows = (await tx`
     SELECT id, tenant_id, title, slug, status, visibility, locale, published_at,
            updated_at, created_at,
@@ -304,6 +314,7 @@ export async function listBlogPostsPage(
     WHERE tenant_id = ${tenantId}
       AND deleted_at IS NULL
       AND (${status}::text IS NULL OR status = ${status})
+      AND (${locale}::text IS NULL OR locale = ${locale})
       AND (
         ${cursorCreatedAt}::timestamptz IS NULL
         OR (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
@@ -351,6 +362,7 @@ export async function listBlogPostsFullPage(
   tenantId: string,
   options: {
     status?: BlogContentStatus;
+    locale?: string;
     limit?: number;
     cursor?: KeysetCursor | null;
   } = {}
@@ -364,6 +376,7 @@ export async function listBlogPostsFullPage(
   const cursorCreatedAt = options.cursor?.createdAt ?? null;
   const cursorId = options.cursor?.id ?? null;
   const status = options.status ?? null;
+  const locale = options.locale ?? null;
 
   const rows = (await tx`
     SELECT id, tenant_id, author_tenant_user_id, title, slug, excerpt, content_json,
@@ -377,6 +390,7 @@ export async function listBlogPostsFullPage(
     WHERE tenant_id = ${tenantId}
       AND deleted_at IS NULL
       AND (${status}::text IS NULL OR status = ${status})
+      AND (${locale}::text IS NULL OR locale = ${locale})
       AND (
         ${cursorCreatedAt}::timestamptz IS NULL
         OR (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
@@ -405,23 +419,23 @@ export async function listBlogPosts(
     MAX_LIST_LIMIT
   );
 
-  const rows = (
-    filter.status
-      ? await tx`
-        SELECT id, tenant_id, title, slug, status, visibility, locale, published_at, updated_at, created_at
-        FROM awcms_blog_posts
-        WHERE tenant_id = ${tenantId} AND status = ${filter.status} AND deleted_at IS NULL
-        ORDER BY updated_at DESC
-        LIMIT ${limit}
-      `
-      : await tx`
-        SELECT id, tenant_id, title, slug, status, visibility, locale, published_at, updated_at, created_at
-        FROM awcms_blog_posts
-        WHERE tenant_id = ${tenantId} AND deleted_at IS NULL
-        ORDER BY updated_at DESC
-        LIMIT ${limit}
-      `
-  ) as BlogPostSummaryRow[];
+  const status = filter.status ?? null;
+  const locale = filter.locale ?? null;
+
+  // Collapsed from a two-branch `filter.status ? … : …` into one statement when
+  // `locale` was added: two optional filters written that way is four copies of
+  // the same SELECT, and the third filter would make it eight. Same
+  // `${param}::text IS NULL` idiom the paged siblings above already use.
+  const rows = (await tx`
+    SELECT id, tenant_id, title, slug, status, visibility, locale, published_at, updated_at, created_at
+    FROM awcms_blog_posts
+    WHERE tenant_id = ${tenantId}
+      AND deleted_at IS NULL
+      AND (${status}::text IS NULL OR status = ${status})
+      AND (${locale}::text IS NULL OR locale = ${locale})
+    ORDER BY updated_at DESC
+    LIMIT ${limit}
+  `) as BlogPostSummaryRow[];
 
   return rows.map(toBlogPostSummary);
 }
@@ -572,6 +586,22 @@ export type ListBlogPostsForAdminFilter = {
   status?: BlogContentStatus;
   /** Matches posts assigned this category/tag term id (via `awcms_blog_post_terms`). */
   termId?: string;
+  /**
+   * `true` lists ONLY soft-deleted posts — the bin — instead of only live ones.
+   *
+   * Without it `posts.restore` is a permission `/admin/blog` could appear to
+   * drive and never could: this list hard-filtered `deleted_at IS NULL`, so a
+   * soft-deleted post was never on screen to restore, and the Restore control
+   * was therefore rendered against `status = 'archived'` — which is a different
+   * axis, is not soft-deleted, and makes `POST .../restore` answer 404 every
+   * time (it requires `canRestorePost`, i.e. `deleted_at IS NOT NULL`).
+   *
+   * Deliberately a separate VIEW rather than an `includeDeleted` union: mixing
+   * binned rows into the working list gives every row's status badge two
+   * possible meanings, and the operator question is "what is in the bin", not
+   * "show me everything at once".
+   */
+  deletedOnly?: boolean;
   page?: number;
   pageSize?: number;
 };
@@ -618,12 +648,14 @@ export async function listBlogPostsForAdmin(
   const search = filter.search?.trim() || null;
   const status = filter.status ?? null;
   const termId = filter.termId ?? null;
+  const deletedOnly = filter.deletedOnly === true;
 
   const rows = (await tx`
     SELECT p.id, p.tenant_id, p.title, p.slug, p.status, p.visibility, p.locale,
            p.author_tenant_user_id, p.published_at, p.updated_at
     FROM awcms_blog_posts p
-    WHERE p.tenant_id = ${tenantId} AND p.deleted_at IS NULL
+    WHERE p.tenant_id = ${tenantId}
+      AND (CASE WHEN ${deletedOnly} THEN p.deleted_at IS NOT NULL ELSE p.deleted_at IS NULL END)
       AND (${status}::text IS NULL OR p.status = ${status})
       AND (${search}::text IS NULL OR p.title ILIKE '%' || ${search} || '%')
       AND (
@@ -640,7 +672,8 @@ export async function listBlogPostsForAdmin(
   const countRows = (await tx`
     SELECT count(*)::int AS count
     FROM awcms_blog_posts p
-    WHERE p.tenant_id = ${tenantId} AND p.deleted_at IS NULL
+    WHERE p.tenant_id = ${tenantId}
+      AND (CASE WHEN ${deletedOnly} THEN p.deleted_at IS NOT NULL ELSE p.deleted_at IS NULL END)
       AND (${status}::text IS NULL OR p.status = ${status})
       AND (${search}::text IS NULL OR p.title ILIKE '%' || ${search} || '%')
       AND (

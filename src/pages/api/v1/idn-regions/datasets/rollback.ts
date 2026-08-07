@@ -30,7 +30,10 @@ import { recordAuditEvent } from "../../../../../modules/logging/application/aud
  * the old one), so this is a status flip, not a re-import.
  *
  * Same guarantees as activation: ABAC-gated, `Idempotency-Key` required, audited
- * with both dataset codes.
+ * with both dataset codes — and, since ADR-0053, the permission it enforces
+ * (`idn_admin_regions.dataset.restore`) is `scope: "platform"`, so only the
+ * platform tenant can reach it at all. See the activate route's header for why
+ * this path exists again after ADR-0052 removed it.
  */
 const IDEMPOTENCY_SCOPE = "idn_regions_dataset_rollback";
 

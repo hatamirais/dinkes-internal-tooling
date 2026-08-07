@@ -6,52 +6,66 @@ AWCMS adalah **template lini ERP/back-office keluarga AWCMS** milik AhliWeb — 
 
 Baca dokumen ini sebelum mengerjakan task apa pun di repo ini. Ini adalah kontrak kerja teknis — aturan wajib, guardrail keamanan, dan alur task.
 
-## Relasi dengan awcms-mini (wajib dibaca)
+## Di repo mana pekerjaan dilakukan (wajib dibaca)
 
-> **DITANGGUHKAN sejak 31 Juli 2026 — baca ini lebih dulu.**
-> `ahliweb/awcms-mini` dan `ahliweb/awcms-micro` **dibekukan sebagai referensi**:
-> boleh dibaca, polanya boleh disalin, kode boleh di-port KELUAR — tetapi
-> keduanya **tidak menerima perubahan**. Akibatnya aturan mini-first di paragraf
-> berikut **tidak bisa ditempuh**: tidak ada hulu yang menerima pekerjaan.
-> Selama pembekuan berlaku, **fitur fondasi dirintis langsung di repo ini**.
+> **Sejak 2 Agustus 2026 ([ADR-0055](docs/adr/0055-development-confined-to-awcms-and-awcms-astro.md), men-supersede ADR-0047):**
+> pengembangan AWCMS berlangsung di **dua repositori, dan hanya dua**:
 >
-> Ini bukan pelonggaran. Seluruh penjagaan yang dulu dibawa jalur mini-first
-> tetap wajib dan kini dinyatakan eksplisit: ADR untuk perubahan standar, review
-> keamanan tambahan untuk modul `auth`/`access`/`sync`, `bun run check` penuh
-> termasuk `family:conformance:check`, dan pencatatan setiap fitur fondasi baru
-> sebagai **divergence sengaja** di `awcms-family-compatibility.yaml` saat ia
-> mendarat — bukan belakangan.
+> | Repo                       | Peran                                                                                                                                                                 |
+> | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | `ahliweb/awcms` (repo ini) | **System of record** — modular monolith, seluruh permukaan otorisasi, API, dan seluruh layar admin ([ADR-0051](docs/adr/0051-admin-screens-consolidated-in-awcms.md)) |
+> | `ahliweb/awcms-astro`      | **Experience layer + BFF** ([ADR-0045](docs/adr/0045-jualanku-porting-awcms-system-of-record-astro-bff.md)) — situs publik & proksi sesi; tak pernah sumber kebenaran |
 >
-> Alasan, bukti, dan syarat pencabutannya:
-> [ADR-0047](docs/adr/0047-mini-micro-frozen-foundation-built-here.md).
-> Paragraf di bawah tetap berlaku penuh begitu pembekuan dicabut, jadi ia tidak
-> dihapus.
+> **`awcms-mini` dan `awcms-micro` adalah ARSIP.** Bukan standar, bukan sumber
+> port, bukan template keluarga. Boleh dibaca sebagai referensi sejarah, tetapi
+> **tidak ada pekerjaan yang dijadwalkan "di-port dari" sana**. Kemampuan yang
+> diinginkan **dibangun di sini**, dengan ADR admission-nya sendiri, dinilai
+> dari kebutuhan hari ini — bukan dari apa yang kebetulan sudah ada di repo lain.
+>
+> Aturan mini-first **dicabut**, bukan ditangguhkan. Dokumen
+> [`alur-pengembangan-mini-first.md`](docs/awcms/alur-pengembangan-mini-first.md)
+> dipertahankan sebagai catatan sejarah.
+>
+> **Ini bukan pelonggaran.** Penjagaan yang dulu dibawa jalur mini-first tetap
+> wajib: **ADR untuk perubahan standar**, review keamanan tambahan untuk modul
+> `auth`/`access`/`sync`, `bun run check` penuh termasuk
+> `family:conformance:check`, OpenAPI/AsyncAPI sinkron, RLS `FORCE`, ABAC
+> default-deny, dan migrasi terapan immutable. Satu-satunya yang dicabut adalah
+> kewajiban mencatat tiap fitur fondasi sebagai _divergence_ di
+> `awcms-family-compatibility.yaml` — **ADR-nya sendiri yang kini menjadi
+> catatan itu**, dan duplikatnya hanya menjadi hal kedua yang harus dijaga
+> sinkron.
 
-AWCMS adalah rebuild fondasi (bukan ERP jadi) di atas basis teknis **awcms-mini** (repo standar), yang **dikembangkan** ke skop ERP/SaaS online-first dan **menyerap** kapabilitas website/e-commerce `awcms-micro`. **Fitur fondasi diuji lebih dulu di awcms-mini, baru di-port ke repo ini**; kapabilitas website/e-commerce yang sudah matang di **awcms-micro** juga di-port ke sini (pola adaptasi yang sama, rename prefix `awcms_micro_…` → `awcms_…`). Repo ini bukan tempat merintis fitur fondasi dari nol. Alur port, langkah rename prefix `awcms_mini_…` → `awcms_…`, dan implikasinya untuk agent ada di [`docs/awcms/alur-pengembangan-mini-first.md`](docs/awcms/alur-pengembangan-mini-first.md); peta penyerapan awcms-micro di [`docs/awcms/absorb-awcms-micro-roadmap.md`](docs/awcms/absorb-awcms-micro-roadmap.md).
+Conformance terhadap standar keluarga ini bersifat machine-readable dan ditegakkan CI: manifest [`awcms-family-compatibility.yaml`](awcms-family-compatibility.yaml) + gate `bun run family:conformance:check` (bagian dari `bun run check`). Bila perubahanmu menyentuh versi kontrak (module/capability/OpenAPI/AsyncAPI), versi stack, semantik kontrol reusable (default-deny/RLS/redaction/audit/idempotency/envelope/migration-immutability), atau menambah divergence sengaja dari kontrak yang repo ini ikuti — perbarui manifest + jalankan gate; lihat [`docs/awcms/family-compatibility.md`](docs/awcms/family-compatibility.md).
 
-Conformance terhadap standar keluarga ini bersifat machine-readable dan ditegakkan CI: manifest [`awcms-family-compatibility.yaml`](awcms-family-compatibility.yaml) + gate `bun run family:conformance:check` (bagian dari `bun run check`). Bila perubahanmu menyentuh versi kontrak (module/capability/OpenAPI/AsyncAPI), versi stack, semantik kontrol reusable (default-deny/RLS/redaction/audit/idempotency/envelope/migration-immutability), atau menambah divergence sengaja dari mini — perbarui manifest + jalankan gate; lihat [`docs/awcms/family-compatibility.md`](docs/awcms/family-compatibility.md).
+## Di repo mana sebuah LAYAR dibangun (ADR-0051)
 
-## Di repo mana sebuah LAYAR dibangun (ADR-0048)
+**Semua layar admin dibangun di repo ini**, di bawah satu shell `/admin/*` —
+tenant maupun owner/internal/platform. [ADR-0051](docs/adr/0051-admin-screens-consolidated-in-awcms.md)
+men-supersede ADR-0048 (yang dulu menaruh layar owner/internal di `awcms-astro`).
 
-Dua repo yang dikembangkan punya peran frontend yang berbeda:
-
-| Repo          | Peran                                       | Contoh                                                       |
-| ------------- | ------------------------------------------- | ------------------------------------------------------------ |
-| `awcms-astro` | **admin OWNER / INTERNAL**                  | master data global, aktivasi/rollback dataset, alat operator |
-| `awcms` (ini) | **frontend PUBLIK + admin PUBLIK (tenant)** | situs publik, dan admin tenant atas datanya sendiri          |
+| Repo          | Peran                                              | Contoh                                             |
+| ------------- | -------------------------------------------------- | -------------------------------------------------- |
+| `awcms` (ini) | **frontend PUBLIK + SELURUH admin**                | situs publik, admin tenant, admin platform         |
+| `awcms-astro` | **experience layer + BFF** (ADR-0045, tak berubah) | permukaan publik/Jualanku; bukan rumah layar admin |
 
 Tiga hal yang mudah keliru:
 
-- **Izin tidak ikut pindah.** Layar di `awcms-astro` tetap memanggil `/api/v1/*`
-  milik repo ini, lewat BFF-nya (ADR-0045), dan tetap melewati sesi + konteks
-  tenant + ABAC default-deny. Frontend baru bukan jalur kedua yang lebih longgar.
-- **Jangan deklarasikan `navigation` untuk layar yang tinggal di repo lain.**
-  Sidebar repo ini dibangun dari `listModules()`; entri yang menunjuk halaman
-  tak-ada langsung memerahkan `tests/admin-navigation-registry.test.ts` — dan
-  kalau lolos, ia menjadi 404 permanen di menu.
-- **Aturan ini mengikat layar BARU.** `/admin/*` yang sudah ada masih bercampur
-  tenant dan platform; pemilahannya pekerjaan tersendiri (ADR-0048 §Yang tidak
-  diputuskan).
+- **Repo bukan gerbang keamanan.** ADR-0048 memindahkan _layar_ aktivasi dataset
+  ke repo lain, tetapi _permission_-nya tetap di-seed ke role `owner` setiap
+  tenant — jadi pemisahan itu tidak pernah menahan apa pun. Aksi yang efeknya
+  **melintasi batas tenant** wajib punya **gerbang platform-scoped** di repo ini,
+  dan **tidak boleh** masuk katalog yang di-seed ke role tenant (ADR-0051
+  §Keputusan). Berlaku sekarang untuk `idn_admin_regions.dataset.configure`/`.restore`.
+- **Setiap entri `navigation` wajib punya halaman nyata.** Sidebar dibangun dari
+  `listModules()`; entri yang menunjuk halaman tak-ada langsung memerahkan
+  `tests/admin-navigation-registry.test.ts` — dan kalau lolos, ia menjadi 404
+  permanen di menu. Tambahkan entri `navigation` **dalam perubahan yang sama**
+  dengan layarnya, tidak sebelumnya.
+- **Setiap entri non-core wajib punya `requiredPermission`** yang benar-benar
+  ditegakkan endpoint-nya **dan** di-seed migrasi. Permission yang tak pernah
+  di-seed men-deny bahkan owner sementara kodenya terlihat benar — repo ini sudah
+  pernah kena dua kali (lihat `tests/admin-security-page-contract.test.ts`).
 
 ## Alur kerja wajib setiap task
 
@@ -105,14 +119,14 @@ docs/
 
 ## Peta modul
 
-Per [ADR-0034](docs/adr/0034-awcms-family-direct-use-templates-and-derived-pathway-removal.md) (men-supersede ADR-0022), keluarga AWCMS adalah template dipakai-langsung: modul domain ERP, website/e-commerce, dan integrasi bisnis vertikal **boleh & seharusnya** hidup langsung di `src/modules/` template ini saat dipakai. Sebagai template lini ERP yang **di-ship** dan **superset online-first** ([ADR-0035](docs/adr/0035-awcms-online-first-erp-saas-superset-repositioning.md)), `src/modules/` base saat ini berisi modul **fondasi reusable** + kontrak kesiapan ERP + modul website/konten awal (`theming`/`blog-content`/`news-portal`); klaster website/e-commerce awcms-micro lain **diserap bertahap** (lihat [`docs/awcms/absorb-awcms-micro-roadmap.md`](docs/awcms/absorb-awcms-micro-roadmap.md)). Kontrak kesiapan ERP ada di [`docs/awcms/erp-extension-contracts.md`](docs/awcms/erp-extension-contracts.md).
+Per [ADR-0034](docs/adr/0034-awcms-family-direct-use-templates-and-derived-pathway-removal.md) (men-supersede ADR-0022), keluarga AWCMS adalah template dipakai-langsung: modul domain ERP, website/e-commerce, dan integrasi bisnis vertikal **boleh & seharusnya** hidup langsung di `src/modules/` template ini saat dipakai. Sebagai template lini ERP yang **di-ship** dan **superset online-first** ([ADR-0035](docs/adr/0035-awcms-online-first-erp-saas-superset-repositioning.md)), `src/modules/` base saat ini berisi modul **fondasi reusable** + kontrak kesiapan ERP + modul website/konten (`theming`/`blog-content` — `news_portal` sudah **dilebur** ke `blog_content`, [ADR-0044](docs/adr/0044-merge-news-portal-into-blog-content.md)); klaster website/e-commerce awcms-micro lain **diserap bertahap** (lihat [`docs/awcms/absorb-awcms-micro-roadmap.md`](docs/awcms/absorb-awcms-micro-roadmap.md)). Kontrak kesiapan ERP ada di [`docs/awcms/erp-extension-contracts.md`](docs/awcms/erp-extension-contracts.md).
 
-| Kategori                                                     | Modul                                                                                                                                                                                                                                                                      | Hidup di                                           |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| Fondasi (base ini, `src/modules/`)                           | Tenant Admin, Identity Access, Profile Identity, Logging, Module Management, Sync Storage, Workflow Approval, Reporting, Email, Domain Event Runtime, Theming, Blog Content, News Portal — lihat [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) untuk daftar hidup terkini | Repo ini                                           |
-| Website/e-commerce (diserap dari awcms-micro)                | Media Library, Tenant Domain, Form Drafts, SEO Distribution, Site Search, Comments, Newsletter, Social Publishing, Visitor Analytics, Data Lifecycle; trajektori toko online (katalog/keranjang/checkout)                                                                  | `src/modules/` (port bertahap, lihat roadmap)      |
-| ERP — Finance/Inventory/Procurement/Manufacturing/HR-Payroll | General ledger, AP/AR, tax/Coretax export, warehouse, stock adjustment, purchase order, BOM, payroll run, dst.                                                                                                                                                             | `src/modules/` (ditambahkan saat template dipakai) |
-| Integrasi bisnis vertikal                                    | Payment gateway, marketplace, logistik, Coretax                                                                                                                                                                                                                            | `src/modules/` (ditambahkan saat template dipakai) |
+| Kategori                                                     | Modul                                                                                                                                                                                                                                                                                                                                                                      | Hidup di                                           |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Fondasi (base ini, `src/modules/`)                           | Tenant Admin, Identity Access, Profile Identity, Logging, Module Management, Sync Storage, Workflow Approval, Reporting, Email, Domain Event Runtime, Theming, Blog Content (menyerap News Portal — [ADR-0044](docs/adr/0044-merge-news-portal-into-blog-content.md)), Idn Admin Regions — lihat [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) untuk daftar hidup terkini | Repo ini                                           |
+| Website/e-commerce (diserap dari awcms-micro)                | Media Library, Tenant Domain, Form Drafts, SEO Distribution, Site Search, Comments, Newsletter, Social Publishing, Visitor Analytics, Data Lifecycle; trajektori toko online (katalog/keranjang/checkout)                                                                                                                                                                  | `src/modules/` (port bertahap, lihat roadmap)      |
+| ERP — Finance/Inventory/Procurement/Manufacturing/HR-Payroll | General ledger, AP/AR, tax/Coretax export, warehouse, stock adjustment, purchase order, BOM, payroll run, dst.                                                                                                                                                                                                                                                             | `src/modules/` (ditambahkan saat template dipakai) |
+| Integrasi bisnis vertikal                                    | Payment gateway, marketplace, logistik, Coretax                                                                                                                                                                                                                                                                                                                            | `src/modules/` (ditambahkan saat template dipakai) |
 
 Modul fondasi baru mengikuti urutan: tenant/identity/access dulu, lalu modul fondasi lain yang bergantung padanya. Modul domain ERP/integrasi ditambahkan langsung di `src/modules/` template ini ([ADR-0034](docs/adr/0034-awcms-family-direct-use-templates-and-derived-pathway-removal.md)) di atas kontrak kesiapan ERP yang base ini sediakan.
 
@@ -130,7 +144,7 @@ Lihat [`CONTRIBUTING.md`](CONTRIBUTING.md#definition-of-done).
 - [`GOVERNANCE.md`](GOVERNANCE.md) — tata kelola & pengambilan keputusan.
 - [`docs/adr/`](docs/adr/README.md) — keputusan arsitektural (fondasi & batas ekstensi ERP).
 - [`docs/awcms/`](docs/awcms/README.md) — paket dokumen teknis detail per modul fondasi (PRD/SRS/ERD/OpenAPI/AsyncAPI) dan kontrak kesiapan ERP untuk modul domain yang ditambahkan.
-- [`docs/awcms/alur-pengembangan-mini-first.md`](docs/awcms/alur-pengembangan-mini-first.md) — kontrak alur "uji di awcms-mini dulu, lalu port ke awcms" & langkah port.
+- [`docs/awcms/alur-pengembangan-mini-first.md`](docs/awcms/alur-pengembangan-mini-first.md) — **catatan sejarah**: kontrak alur "uji di awcms-mini dulu, lalu port", dicabut oleh [ADR-0055](docs/adr/0055-development-confined-to-awcms-and-awcms-astro.md).
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — apa yang **sudah ada di kode** saat ini vs gap yang tersisa.
 - [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) — **state proyek & titik-lanjut** (baca lebih dulu saat melanjutkan pekerjaan besar): model tata kelola, inventori ringkas, backlog, jebakan penting.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — proses kontribusi & Definition of Done.
@@ -140,11 +154,11 @@ Lihat [`CONTRIBUTING.md`](CONTRIBUTING.md#definition-of-done).
 
 Repo ini dilengkapi playbook pengembangan berbasis agent, diadaptasi dari [awcms-mini](https://github.com/ahliweb/awcms-mini):
 
-- [`.claude/skills/`](.claude/skills/README.md) — 48 skill tingkat-proyek yang meng-encode standar `docs/awcms/` (scaffold modul, migration, endpoint, ABAC guard, audit log, testing, security review, deploy, dst.). Dipanggil otomatis oleh model atau manual via `/<nama-skill>`.
+- [`.claude/skills/`](.claude/skills/README.md) — 55 skill tingkat-proyek yang meng-encode standar `docs/awcms/` (scaffold modul, migration, endpoint, ABAC guard, audit log, testing, security review, deploy, dst.). Dipanggil otomatis oleh model atau manual via `/<nama-skill>`.
 - [`.claude/agents/`](.claude/skills/README.md#subagents-claudeagents) — subagent `awcms-coder` (implementasi issue end-to-end), `awcms-reviewer` (review PR read-only), `awcms-security-auditor` (audit keamanan read-only).
 
-Skill/agent mendeskripsikan pola **target** standar dari repo acuan awcms-mini. Beberapa (mis. `awcms-auth-online-hardening`) mendeskripsikan epik spekulatif yang belum diajukan/dikerjakan — periksa frontmatter `description` tiap skill sebelum mengasumsikan sesuatu sudah ada. Untuk skill yang menargetkan modul ERP/integrasi bisnis vertikal, terapkan langsung di `src/modules/` template ini saat membangun modul itu ([ADR-0034](docs/adr/0034-awcms-family-direct-use-templates-and-derived-pathway-removal.md), men-supersede ADR-0022); nomor issue `#NNN` di dalamnya merujuk epik repo acuan sebagai contoh, bukan tracker repo ini.
+Konsistensi skill kini **digerbangi CI**: `bun run skills:check` ada di rantai `bun run check` ([ADR-0062](docs/adr/0062-skills-are-gated-against-the-code-they-describe.md)), dan gerbangnya dipersempit [ADR-0068](docs/adr/0068-family-standards-posture-editions-and-recorded-divergences.md) sehingga klaim aspirational wajib berada di blok bertanda — path repo arsip ditulis eksplisit (`awcms-mini:src/…`), bukan seolah path repo ini. `awcms-mini`/`awcms-micro` adalah **arsip** ([ADR-0055](docs/adr/0055-development-confined-to-awcms-and-awcms-astro.md)) — bukan lagi "repo acuan"; skill yang badannya masih spesifikasi mini/micro membawa banner statusnya sendiri. Untuk skill yang menargetkan modul ERP/integrasi bisnis vertikal, terapkan langsung di `src/modules/` template ini saat membangun modul itu ([ADR-0034](docs/adr/0034-awcms-family-direct-use-templates-and-derived-pathway-removal.md), men-supersede ADR-0022); nomor issue `#NNN` di badan skill warisan merujuk epik repo arsip sebagai contoh, bukan tracker repo ini.
 
 ## Mulai dari sini
 
-Skeleton Astro + Bun + migration runner dan sebelas modul fondasi (`tenant-admin`, `identity-access`, `profile-identity`, `logging`, `module-management`, `sync-storage`, `workflow-approval`, `reporting`, `email`, `domain-event-runtime`, `theming`) **sudah ada** (lihat [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) untuk state kode terkini dan gap yang tersisa). Untuk melanjutkan pengembangan fondasi: mulai dari `awcms-implement-issue`/`awcms-new-module`, lengkapi RBAC/ABAC + Module Management pada modul baru. Modul domain ERP kini dikerjakan langsung di `src/modules/` template ini ([ADR-0034](docs/adr/0034-awcms-family-direct-use-templates-and-derived-pathway-removal.md)), bukan di repo turunan terpisah.
+Skeleton Astro + Bun + migration runner dan dua puluh satu modul — fondasi (`tenant-admin`, `identity-access`, `profile-identity`, `logging`, `module-management`, `sync-storage`, `workflow-approval`, `reporting`, `email`, `domain-event-runtime`), website/konten (`theming`, `media-library`, `blog-content`, `tenant-domain`, `visitor-analytics`, `data-lifecycle`, `seo-distribution`, `form-drafts`, `site-search`, `comments`), plus `idn-admin-regions` — **sudah ada** (lihat [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) untuk state kode terkini dan gap yang tersisa). Untuk melanjutkan pengembangan fondasi: mulai dari `awcms-implement-issue`/`awcms-new-module`, lengkapi RBAC/ABAC + Module Management pada modul baru. Modul domain ERP kini dikerjakan langsung di `src/modules/` template ini ([ADR-0034](docs/adr/0034-awcms-family-direct-use-templates-and-derived-pathway-removal.md)), bukan di repo turunan terpisah.

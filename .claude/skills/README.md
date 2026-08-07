@@ -4,25 +4,59 @@ Skill Claude Code tingkat-proyek untuk AWCMS. Setiap skill meng-encode standar d
 
 > Baca [`../../AGENTS.md`](../../AGENTS.md) lebih dulu untuk aturan wajib & alur kerja.
 
+> **DIGERBANGI sejak 4 Agustus 2026 — [ADR-0062](../../docs/adr/0062-skills-are-gated-against-the-code-they-describe.md).**
+> `bun run skills:check` (bagian dari `bun run check`) menegakkan tiga hal, dan
+> menyunting skill kini bisa memerahkan CI:
+>
+> 1. **Skill modul HIDUP menjelaskan kode HIDUP.** Kalau `awcms-<x>` subjeknya ada
+>    di registry modul, setiap path `` `src/…` `` yang dikutipnya wajib ADA. Tidak
+>    ada pengecualian untuk aturan ini.
+> 2. **Setiap `ADR-NNNN` yang dikutip punya berkas** di `docs/adr/`.
+> 3. **Skill untuk kode yang TIDAK ada wajib terdaftar** di `ASPIRATIONAL_SKILLS`
+>    (`scripts/skills-check.ts`) dengan alasan: `target-spec`, `historical`, atau
+>    `cross-cutting`.
+> 4. **Setiap `bun run <target>` wajib ada** di `package.json` atau terdaftar di
+>    [`scripts/README.md`](../../scripts/README.md) §Ditunda. §Ditunda memang
+>    mengizinkan skill menyebut target acuan yang belum dibangun — aturan ini
+>    hanya menangkap yang bukan keduanya.
+>
+> **Menulis path milik repo ARSIP?** Tulis `` `awcms-mini:src/…` `` /
+> `` `awcms-micro:src/…` ``, bukan `` `src/…` ``. Badan banyak skill di sini
+> memuat spesifikasi mini apa adanya, dan menuliskan path sumber seolah path repo
+> ini persis kesalahan yang digerbangi.
+
+> **ADR-0055 (2 Agustus 2026) MENCABUT alur mini-first.** `awcms-mini`/`awcms-micro`
+> adalah **ARSIP**: boleh dibaca sebagai sejarah/spesifikasi, tidak menerima
+> perubahan, dan **bukan sumber pekerjaan terjadwal**. Skill yang badannya berbunyi
+> "port dari mini" adalah catatan historis — kemampuan yang diinginkan **dibangun di
+> repo ini** dengan ADR admission-nya sendiri. `awcms-port-from-mini` dipertahankan
+> sebagai catatan BAGAIMANA port dulu dikerjakan, bukan sebagai perintah kerja.
+
 > **Asal & status (diperbarui 2026-07-25).** Skill-skill ini diadaptasi dari
 > repo acuan [`ahliweb/awcms-mini`](https://github.com/ahliweb/awcms-mini) dan
 > kini juga dari [`awcms-micro`](https://github.com/ahliweb/awcms-micro)
 > (program penyerapan ADR-0035). **KOREKSI:** versi sebelumnya menyatakan
 > implementasi ini "baru fondasi Sprint 1–2" dengan empat modul — itu **sudah
-> lama tidak benar**. Repo ini punya **21 modul aktif** dan `sql/001`–`sql/083`;
+> lama tidak benar**. Repo ini punya **21 modul aktif** dan `sql/001`–`sql/090`;
 > lihat [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) untuk daftar nyata.
 > Skill yang badannya masih menandai dirinya "BACAAN SAJA" tetap begitu — itu
 > per-skill, bukan pernyataan tentang repo secara keseluruhan.
 
-> **Verifikasi command sebelum menjalankannya.** `package.json` kini punya **75
-> script**, termasuk yang dulu ditandai belum ada (`openapi:bundle`,
-> `data-lifecycle:*`, `reporting:*`, dan — **koreksi 2026-07-27** —
-> `db:work-class:generate`/`db:work-class:check`, yang catatan sebelumnya masih
-> menyebut tidak ada). Yang masih **benar-benar tidak ada**: `repo:inventory:*`
-> (yang ada `modules:composition:inventory:*`, cakupannya lain), `i18n:*`, dan
-> `extension:check` (yang terakhir **DIHAPUS** oleh ADR-0034, bukan tertunda —
-> jangan merujuknya). Tetap cek `package.json` sebelum mengeksekusi command dari
-> sebuah skill; daftar ini bergerak tiap kali modul baru mendarat.
+> **Verifikasi command sebelum menjalankannya.** `package.json` kini punya **87
+> script** (diperiksa 5 Agustus 2026), termasuk yang dulu ditandai belum ada:
+> `openapi:bundle`, `data-lifecycle:*`, `reporting:*`,
+> `db:work-class:generate`/`db:work-class:check`, dan — **koreksi 4 Agustus
+> 2026** — `repo:inventory:generate`/`repo:inventory:check`, yang catatan
+> sebelumnya masih menyebut "benar-benar tidak ada". Keduanya mendarat di #374
+> bersama generator `awcms/repo-inventory.md`.
+>
+> Yang masih benar-benar tidak ada: `i18n:*`, dan `extension:check` (yang
+> terakhir **DIHAPUS** oleh ADR-0034, bukan tertunda — jangan merujuknya).
+>
+> Tetap cek `package.json` sebelum mengeksekusi command dari sebuah skill;
+> daftar ini bergerak tiap kali modul baru mendarat, dan **paragraf ini bukan
+> yang digerbangi** — `skills:check` (ADR-0062) menegakkan `SKILL.md`, bukan
+> berkas ini.
 
 ## Katalog
 
@@ -30,7 +64,7 @@ Skill Claude Code tingkat-proyek untuk AWCMS. Setiap skill meng-encode standar d
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | `awcms-implement-issue`                      | Orkestrator: kerjakan satu issue/sprint atomic end-to-end                                                                                                                          | 06, 11, 12                                  |
 | `awcms-new-module`                           | Scaffold modul baru di `src/modules/`                                                                                                                                              | 10, 11                                      |
-| `awcms-port-from-mini`                       | Port modul matang dari awcms-mini ke awcms (rename prefix, konsolidasi migrasi, drop dep/toolchain absen, DoD, commit atomic)                                                      | alur-pengembangan-mini-first.md             |
+| `awcms-port-from-mini`                       | **HISTORIS** — alur mini-first dicabut ADR-0055; catatan bagaimana port dulu dikerjakan (rename prefix, konsolidasi migrasi, DoD), bukan perintah kerja                            | alur-pengembangan-mini-first.md             |
 | `awcms-module-management`                    | Kelola/konsumsi sistem Module Management (registry, lifecycle, settings, health)                                                                                                   | module-management/README.md                 |
 | `awcms-new-migration`                        | Buat/ubah migration SQL (tabel, index, RLS)                                                                                                                                        | 04, 10                                      |
 | `awcms-new-endpoint`                         | Tambah/ubah endpoint REST + OpenAPI                                                                                                                                                | 05, 10                                      |

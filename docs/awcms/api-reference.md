@@ -364,6 +364,53 @@ Clears the delete stamps and records restored_at/restored_by. 404 when the id is
 | ------ | ----------------- | ------ |
 | 200    | Setup lock state. | object |
 
+### `GET /api/v1/tenants` — List every tenant on the deployment (PLATFORM-scoped).
+
+- **operationId**: `listTenants`
+- **Security**: bearerAuth + tenantHeader
+
+Gated by tenant_admin.tenant_provisioning.read, which is scope: platform (ADR-0053) — the chokepoint refuses it unless the acting tenant IS the platform tenant. Deliberately platform-scoped rather than tenant-scoped: this lists EVERY tenant, so a tenant-scoped read would let any customer enumerate the platform's customer list. The projection is narrow on purpose (code, name, status, created_at) — a directory answers who is on the deployment, not what is inside their tenant.
+
+**Parameters**
+
+| Name               | In     | Required | Type   | Description |
+| ------------------ | ------ | -------- | ------ | ----------- |
+| `X-Correlation-ID` | header | no       | string |             |
+
+**Responses**
+
+| Status | Description                         | Schema                                 |
+| ------ | ----------------------------------- | -------------------------------------- |
+| 200    | The tenant directory, newest first. | object                                 |
+| 401    | Missing or invalid session.         | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.         | [`ApiError`](#standard-error-envelope) |
+
+### `POST /api/v1/tenants` — Provision a new tenant with its owner account (PLATFORM-scoped).
+
+- **operationId**: `provisionTenant`
+- **Security**: bearerAuth + tenantHeader
+
+Gated by tenant_admin.tenant_provisioning.create, which is scope: platform. Creates the tenant, its head office, the owner profile/identity/tenant-user, the system `owner` role, and that role's grants — the SAME code path the setup wizard uses, so the `WHERE scope = 'tenant'` filter on those grants cannot drift between the two. A provisioned tenant NEVER receives platform-scoped permissions. `Idempotency-Key` required; audited in the platform tenant's log. Returns 409 when the tenant_code is taken.
+
+**Parameters**
+
+| Name               | In     | Required | Type   | Description |
+| ------------------ | ------ | -------- | ------ | ----------- |
+| `Idempotency-Key`  | header | yes      | string |             |
+| `X-Correlation-ID` | header | no       | string |             |
+
+**Request body** (required): object
+
+**Responses**
+
+| Status | Description                                                                    | Schema                                 |
+| ------ | ------------------------------------------------------------------------------ | -------------------------------------- |
+| 200    | The provisioned tenant.                                                        | object                                 |
+| 400    | Validation error.                                                              | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                                    | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                                    | [`ApiError`](#standard-error-envelope) |
+| 409    | Idempotency-Key reused with a different request, or tenant_code already taken. | [`ApiError`](#standard-error-envelope) |
+
 ## Tenant Domains
 
 Tenant domain/subdomain mapping for host-based public routing (tenant_domain module, ported from awcms-micro) — tenant-scoped, RLS-protected CRUD over hostname mappings plus verification (dns_txt/dns_cname/file/manual) and primary-host selection. A hostname only serves a tenant once it is verified and active; the optional DNS provider adapter is env-gated and never stores a provider credential in the database. verify and set-primary change which host answers for a tenant, so both are ABAC-gated, idempotency-keyed, and audited.
@@ -1149,6 +1196,69 @@ Anti-oracle: a missing bearer, an unknown/expired/revoked session, a deactivated
 | 400    | Validation error.                                                                                  | [`ApiError`](#standard-error-envelope) |
 | 401    | Missing or invalid session.                                                                        | [`ApiError`](#standard-error-envelope) |
 | 429    | Too many introspection requests from this source (RATE_LIMITED); `Retry-After` carries the window. | [`ApiError`](#standard-error-envelope) |
+
+### `POST /api/v1/auth/session-handoff/issue` — Mint a one-time code letting a registered BFF obtain a session as the caller.
+
+- **operationId**: `issueSessionHandoffCode`
+- **Security**: bearerAuth + tenantHeader
+
+ADR-0050. The authenticated human asks for a short-lived (≤60 second), single-use code; a registered BFF then spends it server-to-server at `/api/v1/auth/session-handoff/redeem` and receives a session token for that person.
+
+**Self-service, not permission-gated.** The identity and assurance level come from the presented session, never from the body, so the caller can only ever mint a code for themselves. There is no permission that answers "may I hand my own session to a client I am already logged into", and inventing one would deny everyone including the tenant owner. Same reasoning as `GET /api/v1/auth/session`.
+
+What constrains it is the CLIENT registry: a code is only issued for a registered, enabled client, bound to a `redirectUri` on that client's **exact-match** allow-list. Prefix and origin matches are refused — `https://app.example.com` prefix-matches `https://app.example.com.evil.test`, and an attacker who can choose the path on a permitted origin can forward the code onward.
+
+Every rejection — unknown client, non-allow-listed URI, a URI carrying a query or fragment, a non-https URI — answers the same `400 HANDOFF_NOT_ALLOWED`. Distinguishing them turns this into a probe for which clients are registered and which URIs they accept.
+
+**No `Idempotency-Key`**, deliberately: each call mints a fresh single-use credential, and replaying one would mean two live codes for one request.
+
+**Parameters**
+
+| Name               | In     | Required | Type   | Description |
+| ------------------ | ------ | -------- | ------ | ----------- |
+| `X-Correlation-ID` | header | no       | string |             |
+
+**Request body** (required): [`IssueSessionHandoffRequest`](#schema-issuesessionhandoffrequest)
+
+**Responses**
+
+| Status | Description                                                                                                     | Schema                                 |
+| ------ | --------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 200    | A one-time code, and the redirect_uri it is bound to.                                                           | object                                 |
+| 400    | The client and redirect_uri combination cannot be used (`HANDOFF_NOT_ALLOWED`), or the body is missing a field. | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                                                                     | [`ApiError`](#standard-error-envelope) |
+
+### `POST /api/v1/auth/session-handoff/redeem` — Spend a one-time handoff code and receive a session token (server-to-server).
+
+- **operationId**: `redeemSessionHandoffCode`
+- **Security**: bearerAuth + tenantHeader
+
+ADR-0050. The only endpoint here authenticated by a **client secret** rather than a session: this is the request that obtains a session, so there is none to present yet. Not a machine credential either — those are read-only by construction (ADR-0049), and a read-only principal minting a human session would be an escalation path.
+
+Call it from the BFF's SERVER. The token must never reach a browser: the BFF stores it server-side and gives the browser its own portal cookie.
+
+The code is spent exactly once, claimed with a guarded `UPDATE … WHERE redeemed_at IS NULL` so two concurrent redemptions cannot both succeed. The spent row is kept rather than deleted, so a replay is answered from evidence instead of from the absence of it.
+
+**Every failure is one answer.** Unknown code, expired code, already-spent code, wrong client, wrong `redirectUri`, bad secret — all `401 HANDOFF_REJECTED`, including a malformed body. The distinctions are recorded in the audit trail; handing them to the caller tells whoever holds a stolen code whether it was ever valid.
+
+The minted session inherits the assurance level the original login REACHED and never more: an `aal1` login cannot be laundered into an `aal2` session.
+
+**No `Idempotency-Key`**: the code IS the idempotency key, with the opposite contract — the second attempt must fail rather than replay the first response.
+
+**Parameters**
+
+| Name               | In     | Required | Type   | Description |
+| ------------------ | ------ | -------- | ------ | ----------- |
+| `X-Correlation-ID` | header | no       | string |             |
+
+**Request body** (required): [`RedeemSessionHandoffRequest`](#schema-redeemsessionhandoffrequest)
+
+**Responses**
+
+| Status | Description                                                                                         | Schema                                 |
+| ------ | --------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 200    | A session token for the human who authenticated.                                                    | object                                 |
+| 401    | The handoff could not be completed (`HANDOFF_REJECTED`) — one answer for every cause, deliberately. | [`ApiError`](#standard-error-envelope) |
 
 ### `GET /api/v1/auth/sso-policy` — Read the tenant authentication policy (password/SSO/JIT/break-glass).
 
@@ -2006,6 +2116,31 @@ Canonical person/organization profile lifecycle, identifiers, and entity links.
 | 401    | Missing or invalid session. | [`ApiError`](#standard-error-envelope) |
 | 403    | Access denied by RBAC/ABAC. | [`ApiError`](#standard-error-envelope) |
 | 404    | Resource not found.         | [`ApiError`](#standard-error-envelope) |
+
+### `POST /api/v1/profiles/{id}/restore` — Restore a soft-deleted profile.
+
+- **operationId**: `restoreProfile`
+- **Security**: bearerAuth + tenantHeader
+
+Counterpart of `DELETE /api/v1/profiles/{id}` (ADR-0058 §A). Clears `deleted_at`/`deleted_by` and stamps `restored_at`/`restored_by`; `delete_reason` is kept, since why the profile was deleted stays true after it is restored. A profile that does not exist and a profile that is not soft-deleted both answer 404 — a distinguishable answer would let a caller probe which profile ids exist.
+
+**Parameters**
+
+| Name              | In     | Required | Type          | Description |
+| ----------------- | ------ | -------- | ------------- | ----------- |
+| `id`              | path   | yes      | string (uuid) |             |
+| `Idempotency-Key` | header | yes      | string        |             |
+
+**Responses**
+
+| Status | Description                                                    | Schema                                 |
+| ------ | -------------------------------------------------------------- | -------------------------------------- |
+| 200    | Profile restored.                                              | object                                 |
+| 400    | Validation error.                                              | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                    | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                    | [`ApiError`](#standard-error-envelope) |
+| 404    | Resource not found.                                            | [`ApiError`](#standard-error-envelope) |
+| 409    | The Idempotency-Key was already used with a different request. | [`ApiError`](#standard-error-envelope) |
 
 ### `GET /api/v1/profiles/resolve` — Resolve a profile by a typed identifier (email/phone/national_id/tax_id/...).
 
@@ -4319,6 +4454,157 @@ Batch rather than one-per-id because a build feed resolves every image on a page
 | 401    | Missing or invalid session.                             | [`ApiError`](#standard-error-envelope) |
 | 403    | Access denied by RBAC/ABAC.                             | [`ApiError`](#standard-error-envelope) |
 
+### `DELETE /api/v1/media/objects/{id}` — Soft delete one media object.
+
+- **operationId**: `mediaObjectSoftDelete`
+- **Security**: bearerAuth + tenantHeader
+
+Gated on `media_library.media.delete`. High-risk, requires `Idempotency-Key`. Body: `{ "reason": string }` — required, trimmed, at most 500 characters, and recorded on the audit row.
+
+Soft delete only: `deleted_at`/`deleted_by`/`delete_reason` are set and `status` is left alone. The R2 object is untouched.
+
+This BREAKS live references on purpose — `GET /api/v1/media/objects` resolves only non-deleted objects, so a post whose `featured_media_id` points here begins resolving to nothing immediately. That is the intended outcome for the case this endpoint serves (a policy-violating image must stop being served), and it is recoverable through `POST /api/v1/media/objects/{id}/restore`. The endpoint deliberately does not scan for referencing rows first: that would require this module to know its own consumers.
+
+An already-deleted object and an unknown id both answer 404 — a distinct "already deleted" would let a caller without `media.read` probe which ids exist.
+
+**Parameters**
+
+| Name               | In     | Required | Type          | Description |
+| ------------------ | ------ | -------- | ------------- | ----------- |
+| `id`               | path   | yes      | string (uuid) |             |
+| `Idempotency-Key`  | header | yes      | string        |             |
+| `X-Correlation-ID` | header | no       | string        |             |
+
+**Request body** (required): [`SoftDeleteMediaObjectRequest`](#schema-softdeletemediaobjectrequest)
+
+**Responses**
+
+| Status | Description                                                                       | Schema                                 |
+| ------ | --------------------------------------------------------------------------------- | -------------------------------------- |
+| 200    | The media object is soft-deleted.                                                 | object                                 |
+| 400    | Validation error.                                                                 | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                                       | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                                       | [`ApiError`](#standard-error-envelope) |
+| 404    | Resource not found.                                                               | [`ApiError`](#standard-error-envelope) |
+| 409    | The Idempotency-Key was reused with a different request (`IDEMPOTENCY_CONFLICT`). | [`ApiError`](#standard-error-envelope) |
+
+### `POST /api/v1/media/objects/{id}/purge` — Hard-delete the registry row of an already soft-deleted media object.
+
+- **operationId**: `mediaObjectPurge`
+- **Security**: bearerAuth + tenantHeader
+
+Gated on `media_library.media.purge`. High-risk, requires `Idempotency-Key`, and cannot be undone. No body.
+
+**Clears the registry row, NOT the R2 bytes.** The `news-media:reconcile` job owns the bucket and has the ordering discipline for deleting from it; a second writer here would mean two processes with different ideas of what is safe to remove. Accepted, stated cost: a window where the R2 object outlives its registry row, closed by the next reconciliation tick, which sees a key with no row and treats it as an orphan-in-R2.
+
+The object must ALREADY be soft-deleted — purging a live object answers 404 rather than destroying it.
+
+**Parameters**
+
+| Name               | In     | Required | Type          | Description |
+| ------------------ | ------ | -------- | ------------- | ----------- |
+| `id`               | path   | yes      | string (uuid) |             |
+| `Idempotency-Key`  | header | yes      | string        |             |
+| `X-Correlation-ID` | header | no       | string        |             |
+
+**Responses**
+
+| Status | Description                                                                                                                                                                                              | Schema                                 |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 200    | The registry row is gone. The R2 object is removed later by the reconciliation job.                                                                                                                      | object                                 |
+| 400    | Validation error.                                                                                                                                                                                        | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                                                                                                                                                              | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                                                                                                                                                              | [`ApiError`](#standard-error-envelope) |
+| 404    | Resource not found.                                                                                                                                                                                      | [`ApiError`](#standard-error-envelope) |
+| 409    | Another resource still holds a foreign key to this object (`MEDIA_OBJECT_REFERENCED` — remove the reference first), or the Idempotency-Key was reused with a different request (`IDEMPOTENCY_CONFLICT`). | [`ApiError`](#standard-error-envelope) |
+
+### `POST /api/v1/media/objects/{id}/restore` — Undo a soft delete.
+
+- **operationId**: `mediaObjectRestore`
+- **Security**: bearerAuth + tenantHeader
+
+Gated on `media_library.media.restore`. High-risk, requires `Idempotency-Key`. No body.
+
+Clears `deleted_at`/`deleted_by`/`delete_reason` and stamps `restored_at`/`restored_by`. `status` is untouched — soft delete is orthogonal to it — so the object returns to whatever lifecycle state it was in.
+
+Restoring an object that is NOT soft-deleted answers 404 rather than succeeding as a no-op: "there was nothing to undo" and "it worked" must not share a response.
+
+**Parameters**
+
+| Name               | In     | Required | Type          | Description |
+| ------------------ | ------ | -------- | ------------- | ----------- |
+| `id`               | path   | yes      | string (uuid) |             |
+| `Idempotency-Key`  | header | yes      | string        |             |
+| `X-Correlation-ID` | header | no       | string        |             |
+
+**Responses**
+
+| Status | Description                                                                       | Schema                                 |
+| ------ | --------------------------------------------------------------------------------- | -------------------------------------- |
+| 200    | The media object is restored.                                                     | object                                 |
+| 400    | Validation error.                                                                 | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                                       | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                                       | [`ApiError`](#standard-error-envelope) |
+| 404    | Resource not found.                                                               | [`ApiError`](#standard-error-envelope) |
+| 409    | The Idempotency-Key was reused with a different request (`IDEMPOTENCY_CONFLICT`). | [`ApiError`](#standard-error-envelope) |
+
+### `GET /api/v1/media/objects/list` — Browse this tenant's media registry.
+
+- **operationId**: `mediaObjectList`
+- **Security**: bearerAuth + tenantHeader
+
+Gated on `media_library.media.read`. Keyset-paginated, newest first, 50 per page. Read-only, so a machine credential (ADR-0049) may hold it.
+
+**A separate path from `GET /api/v1/media/objects`, deliberately.** That endpoint demands `?ids=` — it is a batch RESOLVER built for the `awcms-astro` build to swap ids for public URLs. Teaching it a "no `ids` means list everything" branch would turn a request that is a 400 today into a dump of the whole registry: a contract change wearing the clothes of an addition, and one no existing caller could opt out of.
+
+`list` can never be mistaken for an object id — the object routes require a uuid and answer 400 otherwise — so this static path and `/{id}` do not contend.
+
+**Unlike the resolver, this returns rows in ANY status** (`pending_upload`, `failed`, `orphaned`) and, with `deletion`, soft-deleted ones. That inverts the resolver's public-safety rule on purpose: an administrator opens this list precisely because of the objects that are not healthy, and the lifecycle endpoints need a way to find their targets. Nothing returned here may be used as a public reference — that is what the resolver is for.
+
+The projection omits `bucket_name`/`storage_driver` (deployment facts) and `owner_resource_type`/`owner_resource_id` (vestigial since ADR-0036 moved attachment to the consumer's FK).
+
+`cursor` is opaque: pass back `nextCursor` verbatim. A malformed one is a 400, never silently treated as "no cursor" — that would serve page 1 to a caller who asked for page 4.
+
+**Parameters**
+
+| Name               | In     | Required | Type                                                                                        | Description                                                                                                                                |
+| ------------------ | ------ | -------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `status`           | query  | no       | enum(`pending_upload`, `uploaded`, `verified`, `attached`, `orphaned`, `deleted`, `failed`) | Exact media object status. An unrecognised value is a 400, never ignored.                                                                  |
+| `mimeType`         | query  | no       | string                                                                                      | Exact mime type. Lowercased before matching, since that is how the registry stores it.                                                     |
+| `deletion`         | query  | no       | enum(`live`, `deleted`, `all`)                                                              | Which soft-delete state to list. Defaults to `live`; `deleted` is what a restore/purge workflow needs, and a boolean could not ask for it. |
+| `cursor`           | query  | no       | string                                                                                      | Opaque keyset cursor from a previous response's `nextCursor`.                                                                              |
+| `X-Correlation-ID` | header | no       | string                                                                                      |                                                                                                                                            |
+
+**Responses**
+
+| Status | Description                              | Schema                                 |
+| ------ | ---------------------------------------- | -------------------------------------- |
+| 200    | One page of media objects, newest first. | object                                 |
+| 400    | Validation error.                        | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.              | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.              | [`ApiError`](#standard-error-envelope) |
+
+### `GET /api/v1/media/public-origin` — The origin media public URLs are served from.
+
+- **operationId**: `mediaPublicOrigin`
+- **Security**: bearerAuth + tenantHeader
+
+Requires `media_library.media.read`. Deployment config, not tenant data: every tenant on a deployment is served from the same bucket.
+
+Exists for build clients such as `awcms-astro`, whose Content-Security-Policy must name the media host in `img-src` BEFORE it fetches any object — an image resolved correctly still renders as nothing when the policy blocks the host it lives on. The alternative is copying `NEWS_MEDIA_R2_PUBLIC_BASE_URL` into the consumer by hand, which is two copies of one value that agree until one is edited.
+
+`origin` is scheme + host + port, for the host-wide CSP form; `baseUrl` includes the path, for the tighter prefix form. Both are reported because neither choice is this API's to make.
+
+A deployment that serves no public media (LAN/offline profiles) answers `200` with `configured: false` rather than an error, so a build can omit the `img-src` entry instead of failing. A value that is set but unparseable, or on a scheme that cannot serve media, is reported the same way and never echoed back.
+
+**Responses**
+
+| Status | Description                                                   | Schema                                 |
+| ------ | ------------------------------------------------------------- | -------------------------------------- |
+| 200    | The configured media origin, or an explicit "not configured". | object                                 |
+| 401    | Missing or invalid session.                                   | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                   | [`ApiError`](#standard-error-envelope) |
+
 ## Blog Content
 
 Tenant-scoped blog/content administration (blog_content module, ported from awcms-mini) — posts and pages with their full lifecycle (draft → review → scheduled/published → archived, soft delete/restore/purge), hierarchical categories/tags, append-only revision history (restore APPENDS a revision, never overwrites), PostgreSQL full-text search, presentation/monetization extensions (templates, hierarchical menus, position-based widgets, advertisements), per-tenant blog settings, internal tag-link policy, and the editorial content-quality checklist. The public, anonymous reader surface (`/blog/{tenantCode}/...` index/detail/archive/search/feed/sitemap, ADR-0009) is served by Astro text/html/xml routes and is deliberately NOT part of this REST contract. Publish/unpublish/purge and settings writes are ABAC-gated, idempotency-keyed, and audited.
@@ -4669,6 +4955,82 @@ Gated by blog_content.pages.delete.
 | 403    | Access denied by RBAC/ABAC. | [`ApiError`](#standard-error-envelope) |
 | 404    | Resource not found.         | [`ApiError`](#standard-error-envelope) |
 
+### `POST /api/v1/blog/pages/{id}/archive` — Archive a blog page
+
+- **operationId**: `blogArchivePage`
+- **Security**: bearerAuth + tenantHeader
+
+Gated by blog_content.pages.archive (ADR-0057). High-risk, requires Idempotency-Key. Removes the page from the public site without destroying it; published_at is retained so a later re-publish keeps the original go-live date.
+
+**Parameters**
+
+| Name               | In     | Required | Type   | Description |
+| ------------------ | ------ | -------- | ------ | ----------- |
+| `Idempotency-Key`  | header | yes      | string |             |
+| `X-Correlation-ID` | header | no       | string |             |
+
+**Responses**
+
+| Status | Description                                                                                  | Schema                                 |
+| ------ | -------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 200    | Page archived (or an idempotent replay).                                                     | object                                 |
+| 400    | Validation error.                                                                            | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                                                  | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                                                  | [`ApiError`](#standard-error-envelope) |
+| 404    | Resource not found.                                                                          | [`ApiError`](#standard-error-envelope) |
+| 409    | Invalid status transition, or the Idempotency-Key was already used with a different request. | [`ApiError`](#standard-error-envelope) |
+
+### `POST /api/v1/blog/pages/{id}/publish` — Publish a blog page
+
+- **operationId**: `blogPublishPage`
+- **Security**: bearerAuth + tenantHeader
+
+Gated by blog_content.pages.publish (ADR-0057). High-risk, requires Idempotency-Key. Blocked (422) if the content quality checklist fails when full-online R2-only mode is active for the tenant. Pages have a narrower lifecycle than posts - no review, no scheduled - so the only sources for this transition are draft and archived. No social-publishing hook is invoked - that port's trigger is post_published and a page is not an article.
+
+**Parameters**
+
+| Name               | In     | Required | Type   | Description |
+| ------------------ | ------ | -------- | ------ | ----------- |
+| `Idempotency-Key`  | header | yes      | string |             |
+| `X-Correlation-ID` | header | no       | string |             |
+
+**Responses**
+
+| Status | Description                                                                                  | Schema                                 |
+| ------ | -------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 200    | Page published (or an idempotent replay).                                                    | object                                 |
+| 400    | Validation error.                                                                            | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                                                  | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                                                  | [`ApiError`](#standard-error-envelope) |
+| 404    | Resource not found.                                                                          | [`ApiError`](#standard-error-envelope) |
+| 409    | Invalid status transition, or the Idempotency-Key was already used with a different request. | [`ApiError`](#standard-error-envelope) |
+| 422    | Publish is blocked by the content quality checklist.                                         | [`ApiError`](#standard-error-envelope) |
+
+### `POST /api/v1/blog/pages/{id}/purge` — Permanently purge an archived or soft-deleted blog page
+
+- **operationId**: `blogPurgePage`
+- **Security**: bearerAuth + tenantHeader
+
+Gated by blog_content.pages.purge (ADR-0057). High-risk, irreversible, requires Idempotency-Key. Only an archived or previously soft-deleted page may be purged. Advertisement placements targeting this page neither block the purge nor are deleted with it - they simply go inert, exactly as they already do for a soft-deleted page, because the render query matches target_id against the page being rendered. Their count is returned as adPlacementsNowInert so the change is visible rather than silent.
+
+**Parameters**
+
+| Name               | In     | Required | Type   | Description |
+| ------------------ | ------ | -------- | ------ | ----------- |
+| `Idempotency-Key`  | header | yes      | string |             |
+| `X-Correlation-ID` | header | no       | string |             |
+
+**Responses**
+
+| Status | Description                                                                                                      | Schema                                 |
+| ------ | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 200    | Page purged (or an idempotent replay).                                                                           | object                                 |
+| 400    | Validation error.                                                                                                | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                                                                      | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                                                                      | [`ApiError`](#standard-error-envelope) |
+| 404    | Resource not found.                                                                                              | [`ApiError`](#standard-error-envelope) |
+| 409    | The page is neither archived nor soft-deleted, or the Idempotency-Key was already used with a different request. | [`ApiError`](#standard-error-envelope) |
+
 ### `GET /api/v1/blog/pages/{id}/quality-checklist` — Preview the content quality checklist for a page
 
 - **operationId**: `blogGetPageQualityChecklist`
@@ -4692,12 +5054,37 @@ Read-only preview for the admin editor. Gated by blog_content.pages.read.
 | 403    | Access denied by RBAC/ABAC. | [`ApiError`](#standard-error-envelope) |
 | 404    | Resource not found.         | [`ApiError`](#standard-error-envelope) |
 
+### `POST /api/v1/blog/pages/{id}/restore` — Restore a soft-deleted blog page
+
+- **operationId**: `blogRestorePage`
+- **Security**: bearerAuth + tenantHeader
+
+Gated by blog_content.pages.restore (ADR-0057). High-risk, requires Idempotency-Key. Undoes a soft delete, not an archive - lifecycle status is left untouched, so a page soft-deleted while published comes back published. A page that is not soft-deleted answers 404, the same shape as an unknown id, so restore cannot be used to probe which ids exist.
+
+**Parameters**
+
+| Name               | In     | Required | Type   | Description |
+| ------------------ | ------ | -------- | ------ | ----------- |
+| `Idempotency-Key`  | header | yes      | string |             |
+| `X-Correlation-ID` | header | no       | string |             |
+
+**Responses**
+
+| Status | Description                                                    | Schema                                 |
+| ------ | -------------------------------------------------------------- | -------------------------------------- |
+| 200    | Page restored (or an idempotent replay).                       | object                                 |
+| 400    | Validation error.                                              | [`ApiError`](#standard-error-envelope) |
+| 401    | Missing or invalid session.                                    | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                    | [`ApiError`](#standard-error-envelope) |
+| 404    | Resource not found.                                            | [`ApiError`](#standard-error-envelope) |
+| 409    | The Idempotency-Key was already used with a different request. | [`ApiError`](#standard-error-envelope) |
+
 ### `GET /api/v1/blog/posts` — List this tenant's non-deleted blog posts
 
 - **operationId**: `blogListPosts`
 - **Security**: bearerAuth + tenantHeader
 
-Gated by blog_content.posts.read. Optional ?status= filter, ?limit= bounded (default 20, max 100 — max 50 with `view=full`, whose rows carry `contentJson`).
+Gated by blog_content.posts.read. Optional ?status= and ?locale= filters, ?limit= bounded (default 20, max 100 — max 50 with `view=full`, whose rows carry `contentJson`).
 
 Ordering defaults to `updated_at DESC` — right for an admin table, and unsound as a keyset key because editing a post moves it, so a row can cross a page boundary between requests and be skipped or repeated. A caller that needs EVERY post (a build feed) passes `?order=created_at`, which is immutable, and follows `nextCursor` until it is null. `?cursor=` without `?order=created_at` is refused with 400 rather than quietly honoured.
 
@@ -4705,13 +5092,14 @@ Ordering defaults to `updated_at DESC` — right for an admin table, and unsound
 
 **Parameters**
 
-| Name     | In    | Required | Type                                                          | Description                                                                                                                                                                                           |
-| -------- | ----- | -------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `status` | query | no       | enum(`draft`, `review`, `scheduled`, `published`, `archived`) |                                                                                                                                                                                                       |
-| `limit`  | query | no       | integer                                                       |                                                                                                                                                                                                       |
-| `order`  | query | no       | enum(`created_at`, `updated_at`)                              | Sort key. `created_at` selects the STABLE, cursor-capable traversal; `updated_at` (default) is the admin ordering and rejects `cursor`.                                                               |
-| `cursor` | query | no       | string                                                        | Opaque keyset cursor from a previous response's `nextCursor`. Requires `order=created_at`. A malformed value is a 400, never treated as "no cursor".                                                  |
-| `view`   | query | no       | enum(`summary`, `full`)                                       | Response projection. `summary` (default) returns `BlogPostSummary`; `full` returns `BlogPost` — every column the detail endpoint returns except `termIds`, which would cost one extra query per post. |
+| Name     | In    | Required | Type                                                          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------- | ----- | -------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status` | query | no       | enum(`draft`, `review`, `scheduled`, `published`, `archived`) |                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `locale` | query | no       | string                                                        | Exact match on the post's stored locale. Absent means every locale, which is the right default for an admin table but wasteful for a single-language build feed — that is what this parameter exists for. Not shape-validated beyond non-empty and a 35-character bound, because the write path accepts any non-empty string and a stricter read filter would make a stored locale unreachable. An empty value is a 400, never treated as absent. |
+| `limit`  | query | no       | integer                                                       |                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `order`  | query | no       | enum(`created_at`, `updated_at`)                              | Sort key. `created_at` selects the STABLE, cursor-capable traversal; `updated_at` (default) is the admin ordering and rejects `cursor`.                                                                                                                                                                                                                                                                                                           |
+| `cursor` | query | no       | string                                                        | Opaque keyset cursor from a previous response's `nextCursor`. Requires `order=created_at`. A malformed value is a 400, never treated as "no cursor".                                                                                                                                                                                                                                                                                              |
+| `view`   | query | no       | enum(`summary`, `full`)                                       | Response projection. `summary` (default) returns `BlogPostSummary`; `full` returns `BlogPost` — every column the detail endpoint returns except `termIds`, which would cost one extra query per post.                                                                                                                                                                                                                                             |
 
 `full` requires `order=created_at`: a full traversal is only sound over the immutable ordering, and the ordering is demanded rather than silently substituted. An unrecognised value is a 400, never a silent fallback to `summary`.
 |
@@ -7174,6 +7562,32 @@ Requires `comments.moderation.archive`. Only an APPROVED comment can be archived
 | 404    | Resource not found.                                                                        | [`ApiError`](#standard-error-envelope) |
 | 409    | Idempotency-Key conflict, or the comment is not approved and therefore cannot be archived. | [`ApiError`](#standard-error-envelope) |
 
+### `POST /api/v1/comments/admin/{id}/delete` — Soft delete a comment as a moderator.
+
+- **operationId**: `deleteCommentAsModerator`
+- **Security**: bearerAuth + tenantHeader
+
+Requires `comments.moderation.delete` (ADR-0058 §B). Legal from every non-terminal status. Non-destructive — the row, its body text and its append-only moderation history are all retained; what is withdrawn is visibility. Open reports on the comment are resolved, since a deleted comment cannot be acted on again.
+
+This is the only moderator transition with no way back through the API: `deleted` is terminal, and recovering a deleted comment is an operator/database action. Use `reject` for a reversible decision, or `archive` to withdraw an approved comment while keeping it restorable. Idempotency-keyed and audited at `warning` severity.
+
+**Parameters**
+
+| Name              | In     | Required | Type          | Description |
+| ----------------- | ------ | -------- | ------------- | ----------- |
+| `id`              | path   | yes      | string (uuid) |             |
+| `Idempotency-Key` | header | yes      | string        |             |
+
+**Responses**
+
+| Status | Description                                                  | Schema                                 |
+| ------ | ------------------------------------------------------------ | -------------------------------------- |
+| 200    | The comment was soft-deleted.                                | object                                 |
+| 401    | Missing or invalid session.                                  | [`ApiError`](#standard-error-envelope) |
+| 403    | Access denied by RBAC/ABAC.                                  | [`ApiError`](#standard-error-envelope) |
+| 404    | Resource not found.                                          | [`ApiError`](#standard-error-envelope) |
+| 409    | Idempotency-Key conflict, or the comment is already deleted. | [`ApiError`](#standard-error-envelope) |
+
 ### `POST /api/v1/comments/admin/{id}/moderate` — Approve, reject, or mark a comment as spam.
 
 - **operationId**: `moderateComment`
@@ -8007,6 +8421,42 @@ sectionType cannot be changed after creation — omit it, do not send the old or
 }
 ```
 
+### Schema: IssueSessionHandoffRequest
+
+| Field         | Type         | Required | Nullable | Description                                                                                                               |
+| ------------- | ------------ | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `clientKey`   | string       | yes      | no       | The registered BFF client's public key. Not a secret, and never treated as one — the secret authenticates at redeem time. |
+| `redirectUri` | string (uri) | yes      | no       | Must appear EXACTLY in the client's registered allow-list. https only, no query, no fragment.                             |
+
+**Example**
+
+```json
+{
+  "clientKey": "string",
+  "redirectUri": "string"
+}
+```
+
+### Schema: RedeemSessionHandoffRequest
+
+| Field          | Type         | Required | Nullable | Description                                            |
+| -------------- | ------------ | -------- | -------- | ------------------------------------------------------ |
+| `clientKey`    | string       | yes      | no       |                                                        |
+| `clientSecret` | string       | yes      | no       | Server-to-server only. A browser must never hold this. |
+| `code`         | string       | yes      | no       |                                                        |
+| `redirectUri`  | string (uri) | yes      | no       | Must equal the URI the code was issued against.        |
+
+**Example**
+
+```json
+{
+  "clientKey": "string",
+  "clientSecret": "string",
+  "code": "string",
+  "redirectUri": "string"
+}
+```
+
 ### Schema: SeoConfigUpdateRequest
 
 PUT body for seoConfigUpdate — a full replace of the mutable SEO-defaults fields. Every field is optional in the request; an omitted string field is treated as null, and omitted booleans/limit fall back to their defaults (noindex=false, sitemap/feeds enabled=true, feedItemLimit=50). Unknown keys are ignored.
@@ -8158,6 +8608,20 @@ Every field is optional — an omitted field keeps its current value.
   "suggestionsEnabled": false,
   "suggestionLimit": 1,
   "analyticsEnabled": false
+}
+```
+
+### Schema: SoftDeleteMediaObjectRequest
+
+| Field    | Type   | Required | Nullable | Description                                                                                                                                                                                          |
+| -------- | ------ | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reason` | string | yes      | no       | Why the object is being removed. Trimmed before length-checking, so a whitespace-only value fails as "required". Written to the audit row, which outlives the object it describes — hence the bound. |
+
+**Example**
+
+```json
+{
+  "reason": "string"
 }
 ```
 

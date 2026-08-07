@@ -1,4 +1,9 @@
 import { recordAuditEvent } from "../../logging/application/audit-log";
+import {
+  encodeKeysetCursor,
+  KEYSET_CURSOR_CREATED_AT_SQL,
+  type KeysetCursor
+} from "../../_shared/keyset-pagination";
 import type { NewsMediaR2Config } from "../domain/media-r2-config";
 import {
   buildNewsMediaObjectKey,
@@ -18,9 +23,12 @@ import {
  * UPDATE; the caller is responsible for having done the real R2 work first
  * (ADR-0006: provider calls never happen inside a DB transaction).
  *
- * Audit events are written for exactly the actions the epic's acceptance
- * criteria require: create, verify, attach, detach, delete, restore, purge
- * (skill `awcms-audit-log`). The intermediate `pending_upload -> uploaded`
+ * Audit events are written for exactly the actions that still exist here:
+ * create, verify, delete, restore, purge (skill `awcms-audit-log`). The epic's
+ * original list also named attach/detach; ADR-0056 §A removed both, since
+ * ADR-0036 moved the relation they wrote to the consumer's own FK — see the
+ * marker where those two functions used to be. The intermediate
+ * `pending_upload -> uploaded`
  * and any `-> orphaned`/`-> failed` transition are logged via the structured
  * logger only (`src/lib/logging/logger.ts`) — see `markNewsMediaObjectUploaded`/
  * `markNewsMediaObjectOrphaned`/`markNewsMediaObjectFailed` below for why
@@ -241,6 +249,119 @@ export type FetchNewsMediaObjectOptions = {
   includeDeleted?: boolean;
 };
 
+/**
+ * Column list shared by the keyset list query below. The point lookups keep
+ * their inline lists — rewriting six working queries to share a constant would
+ * be churn dressed as tidiness — but a list query must select these columns
+ * PLUS the cursor expression, and repeating them a seventh time beside an
+ * `AS created_at_cursor` alias is exactly where a column silently goes missing.
+ */
+const SELECT_COLUMNS =
+  "id, tenant_id, module_key, owner_resource_type, owner_resource_id, " +
+  "storage_driver, bucket_name, object_key, original_filename, public_url, " +
+  "mime_type, size_bytes, checksum_sha256, width, height, alt_text, caption, " +
+  "status, created_by_tenant_user_id, created_at, updated_at, " +
+  "deleted_at, deleted_by, delete_reason, restored_at, restored_by";
+
+/** Page size for {@link listMediaObjects} — bounded, keyset-paginated. */
+export const MEDIA_OBJECT_LIST_LIMIT = 50;
+
+/**
+ * Which soft-delete state a listing wants.
+ *
+ * A boolean `includeDeleted` (the point lookups' convention) is wrong for a
+ * BROWSE surface: the admin screen's whole reason to look at deleted objects is
+ * to restore or purge them, and folding them in with live ones makes "show me
+ * what I deleted" impossible to ask. Three explicit states, `"live"` by default
+ * — a listing that silently included soft-deleted objects would put rows in
+ * front of an operator that no consumer can resolve.
+ */
+export type MediaObjectDeletionFilter = "live" | "deleted" | "all";
+
+export type ListMediaObjectsFilter = {
+  status?: NewsMediaObjectStatus;
+  /** Exact match on the stored (already lowercased) mime type. */
+  mimeType?: string;
+  deletion?: MediaObjectDeletionFilter;
+};
+
+/**
+ * Browse the tenant's media registry — keyset paginated, newest first
+ * (ADR-0056 §C).
+ *
+ * ## Why this is a new function and not a widened `?ids=`
+ *
+ * `GET /api/v1/media/objects` demands `?ids=`: it is a batch RESOLVER, built
+ * for `awcms-astro` to swap ids for URLs at build time, and it answers only for
+ * objects safe to reference publicly. Before this function the application
+ * layer had `fetchNewsMediaObjectById`, `fetchNewsMediaObjectsByIds`, and
+ * `fetchNewsMediaObjectByObjectKey` — every one a point lookup. There was no
+ * way to ask "what media does this tenant have", so a browse screen could not
+ * be built on the existing surface at all, whatever the permissions said.
+ *
+ * Teaching the resolver a no-`ids` mode would turn a request that is a 400
+ * today into a dump of the whole registry — a contract change wearing the
+ * clothes of an addition. Hence a separate function and a separate route.
+ *
+ * ## Deliberately unlike the resolver
+ *
+ * This returns rows in ANY status, including `pending_upload` and `failed`,
+ * and (when asked) soft-deleted ones. That is the opposite of
+ * `isNewsMediaObjectSafeForPublicReference`, and it is correct here: an
+ * administrator's reason to open this list is usually the objects that are NOT
+ * healthy. The `media.read` guard is what keeps that inside the tenant, and no
+ * caller of this function may use its rows as a public reference — use the port
+ * for that.
+ *
+ * The cursor carries FULL-PRECISION `created_at` text
+ * (`KEYSET_CURSOR_CREATED_AT_SQL`), never a JS `Date`, so a page boundary
+ * cannot skip rows sharing a millisecond — the trap this repo already paid for
+ * (Issue #158), and one a media registry walks straight into, since a batch
+ * upload writes many rows inside the same millisecond.
+ */
+export async function listMediaObjects(
+  tx: Bun.SQL,
+  tenantId: string,
+  filter: ListMediaObjectsFilter = {},
+  cursor?: KeysetCursor
+): Promise<{ items: NewsMediaObjectView[]; nextCursor: string | null }> {
+  const statusParam = filter.status ?? null;
+  const mimeTypeParam = filter.mimeType ?? null;
+  const deletion: MediaObjectDeletionFilter = filter.deletion ?? "live";
+  const cursorCreatedAt = cursor ? cursor.createdAt : null;
+  const cursorId = cursor ? cursor.id : null;
+
+  const rows = (await tx`
+    SELECT ${tx.unsafe(SELECT_COLUMNS)},
+           ${tx.unsafe(KEYSET_CURSOR_CREATED_AT_SQL)} AS created_at_cursor
+    FROM awcms_news_media_objects
+    WHERE tenant_id = ${tenantId}
+      AND (${statusParam}::text IS NULL OR status = ${statusParam})
+      AND (${mimeTypeParam}::text IS NULL OR mime_type = ${mimeTypeParam})
+      AND (
+        ${deletion} = 'all'
+        OR (${deletion} = 'live' AND deleted_at IS NULL)
+        OR (${deletion} = 'deleted' AND deleted_at IS NOT NULL)
+      )
+      AND (
+        ${cursorCreatedAt}::timestamptz IS NULL
+        OR (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
+      )
+    ORDER BY created_at DESC, id DESC
+    LIMIT ${MEDIA_OBJECT_LIST_LIMIT}
+  `) as (NewsMediaObjectRow & { created_at_cursor: string })[];
+
+  const last = rows[rows.length - 1];
+
+  return {
+    items: rows.map(toView),
+    nextCursor:
+      rows.length === MEDIA_OBJECT_LIST_LIMIT && last
+        ? encodeKeysetCursor(last.created_at_cursor, last.id)
+        : null
+  };
+}
+
 export async function fetchNewsMediaObjectById(
   tx: Bun.SQL,
   tenantId: string,
@@ -433,108 +554,25 @@ export async function markNewsMediaObjectVerified(
   return updated;
 }
 
-export type AttachNewsMediaObjectInput = {
-  ownerResourceType: NewsMediaOwnerResourceType;
-  ownerResourceId: string;
-};
-
-/**
- * `verified -> attached` — binds the media object to an owning resource.
- * Deliberately requires `status = 'verified'` (never straight from
- * `pending_upload`/`uploaded`) — this is what enforces "Keputusan kunci #4"
- * (editorial content must only ever point at verified/confirmed media,
- * never at an unverified upload) at the write path, not just by convention.
+/*
+ * ADR-0056 §A — `attachNewsMediaObject`/`detachNewsMediaObject` USED TO LIVE
+ * HERE, and are gone along with the two permissions that named them
+ * (`sql/087`).
+ *
+ * They wrote `status = 'attached'` plus `owner_resource_type`/`owner_resource_id`
+ * — the object→content relation this module owned BEFORE ADR-0036's inversion.
+ * After it, a media object's attachment is stated by the consumer's own FK
+ * (`awcms_blog_posts.featured_media_id`, `awcms_news_portal_ad_placements.
+ * media_object_id`), so attaching means updating the consumer's row under the
+ * consumer's permission. Nothing in `src/`, `scripts/`, or `tests/` had called
+ * either function.
+ *
+ * The `attached` STATUS survives them deliberately: `sql/041`'s CHECK still
+ * admits it and `isNewsMediaObjectSafeForPublicReference` still treats it as
+ * safe, so rows already in that state keep resolving. Nothing writes it
+ * anymore, which is the honest end state — `verified` is what the finalize
+ * flow produces, and it is equally referenceable.
  */
-export async function attachNewsMediaObject(
-  tx: Bun.SQL,
-  tenantId: string,
-  actorTenantUserId: string,
-  id: string,
-  input: AttachNewsMediaObjectInput,
-  correlationId?: string
-): Promise<NewsMediaObjectView | null> {
-  const rows = (await tx`
-    UPDATE awcms_news_media_objects
-    SET status = 'attached', owner_resource_type = ${input.ownerResourceType},
-        owner_resource_id = ${input.ownerResourceId}, updated_at = now()
-    WHERE tenant_id = ${tenantId} AND id = ${id}
-      AND status = 'verified' AND deleted_at IS NULL
-    RETURNING id, tenant_id, module_key, owner_resource_type, owner_resource_id,
-      storage_driver, bucket_name, object_key, original_filename, public_url,
-      mime_type, size_bytes, checksum_sha256, width, height, alt_text, caption,
-      status, created_by_tenant_user_id, created_at, updated_at,
-      deleted_at, deleted_by, delete_reason, restored_at, restored_by
-  `) as NewsMediaObjectRow[];
-
-  const updated = rows[0] ? toView(rows[0]) : null;
-  if (!updated) return null;
-
-  await recordAuditEvent(tx, {
-    tenantId,
-    actorTenantUserId,
-    moduleKey: AUDIT_MODULE_KEY,
-    action: "news_media.object.attached",
-    resourceType: AUDIT_RESOURCE_TYPE,
-    resourceId: id,
-    severity: "info",
-    message: `News media object attached to ${input.ownerResourceType} ${input.ownerResourceId}.`,
-    attributes: {
-      objectKey: updated.objectKey,
-      ownerResourceType: input.ownerResourceType,
-      ownerResourceId: input.ownerResourceId
-    },
-    correlationId
-  });
-
-  return updated;
-}
-
-/**
- * `attached -> verified` — reverses `attachNewsMediaObject`. Returns to
- * `verified` (not `orphaned`): a detached-but-still-good media object
- * remains immediately reusable for another `attach` call.
- * `markNewsMediaObjectOrphaned` is the separate, deliberate "flag for
- * cleanup" transition (doc `r2-backup-lifecycle.md` §2's orphan detection),
- * not an automatic side effect of detach.
- */
-export async function detachNewsMediaObject(
-  tx: Bun.SQL,
-  tenantId: string,
-  actorTenantUserId: string,
-  id: string,
-  correlationId?: string
-): Promise<NewsMediaObjectView | null> {
-  const rows = (await tx`
-    UPDATE awcms_news_media_objects
-    SET status = 'verified', owner_resource_type = NULL, owner_resource_id = NULL,
-        updated_at = now()
-    WHERE tenant_id = ${tenantId} AND id = ${id}
-      AND status = 'attached' AND deleted_at IS NULL
-    RETURNING id, tenant_id, module_key, owner_resource_type, owner_resource_id,
-      storage_driver, bucket_name, object_key, original_filename, public_url,
-      mime_type, size_bytes, checksum_sha256, width, height, alt_text, caption,
-      status, created_by_tenant_user_id, created_at, updated_at,
-      deleted_at, deleted_by, delete_reason, restored_at, restored_by
-  `) as NewsMediaObjectRow[];
-
-  const updated = rows[0] ? toView(rows[0]) : null;
-  if (!updated) return null;
-
-  await recordAuditEvent(tx, {
-    tenantId,
-    actorTenantUserId,
-    moduleKey: AUDIT_MODULE_KEY,
-    action: "news_media.object.detached",
-    resourceType: AUDIT_RESOURCE_TYPE,
-    resourceId: id,
-    severity: "info",
-    message: `News media object detached: ${updated.objectKey}.`,
-    attributes: { objectKey: updated.objectKey },
-    correlationId
-  });
-
-  return updated;
-}
 
 /**
  * `pending_upload|uploaded|verified -> orphaned` — flags a never-attached
@@ -953,11 +991,68 @@ export async function restoreNewsMediaObject(
   return restored;
 }
 
+export type PurgeNewsMediaObjectResult =
+  | { ok: true; objectKey: string }
+  /** No row matched `id` in this tenant with `deleted_at IS NOT NULL`. */
+  | { ok: false; reason: "not_purgeable" }
+  /** A live FK still points at the row — see the savepoint note below. */
+  | { ok: false; reason: "still_referenced" };
+
+/** Postgres foreign-key violation. */
+const FOREIGN_KEY_VIOLATION = "23503";
+
 /**
- * Hard delete. Caller must have already verified the row is soft-deleted
- * (this only guards it at the SQL level via `deleted_at IS NOT NULL` in the
- * WHERE clause) — same "caller verifies eligibility first" convention as
- * `blog-content/application/blog-post-directory.ts`'s `purgeBlogPost`.
+ * The SQLSTATE is on `errno`, NOT on `code`. Bun sets `code` to its own
+ * `"ERR_POSTGRES_SERVER_ERROR"` for every server error alike, so comparing
+ * `code` against a SQLSTATE is always false — the error would be rethrown and
+ * the caller-actionable 409 would surface as a 500. Verified against
+ * PostgreSQL 18 + Bun 1.3.14; `String()` because `errno` is typed loosely
+ * enough to be a number in other Bun error shapes. Same idiom as the ten other
+ * violation checks in this repo (`role-admin.ts`, `office-directory.ts`, ...).
+ */
+function isForeignKeyViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "errno" in error &&
+    String((error as { errno?: unknown }).errno) === FOREIGN_KEY_VIOLATION
+  );
+}
+
+/** Fixed identifier — never built from input. */
+const PURGE_SAVEPOINT = "awcms_purge_media_object";
+
+/**
+ * Hard delete of the REGISTRY ROW. Eligibility is enforced in the `WHERE`
+ * (`deleted_at IS NOT NULL`), so an object that was never soft-deleted comes
+ * back `not_purgeable` rather than silently vanishing.
+ *
+ * ## This does NOT delete the R2 object (ADR-0056 §B)
+ *
+ * The reconciliation job owns the bucket. Deleting bytes here would put two
+ * writers on one bucket with two different ideas of what is safe to remove, and
+ * the job already has the ordering discipline for it (see
+ * `scripts/news-media-r2-reconcile.ts`). The accepted, stated cost is a window
+ * where the R2 object outlives its registry row — closed by the next
+ * reconciliation tick, which sees a key with no row and treats it as an
+ * orphan-in-R2.
+ *
+ * ## Why a savepoint, and why no pre-check
+ *
+ * `awcms_news_portal_ad_placements.media_object_id` is a hard, NOT NULL FK to
+ * this table with no `ON DELETE` clause — so purging a still-referenced object
+ * raises `23503`. In PostgreSQL that ABORTS the transaction: every later
+ * statement fails with "current transaction is aborted", and the COMMIT
+ * `withTenant` performs on a returned 4xx fails too. Catching the error without
+ * a savepoint turns a caller-actionable 409 into a 500.
+ *
+ * There is deliberately no pre-check SELECT to go with it — unlike
+ * `provisionTenant`, which pre-checks then uses the savepoint only for the race.
+ * A pre-check here would have to name the referencing tables, i.e. this module
+ * would have to know its own CONSUMERS (`module.ts`: "media must never depend on
+ * its own consumers"). Letting the FK answer keeps that knowledge in the
+ * database, where it already lives, and stays correct the day a second module
+ * adds a reference.
  */
 export async function purgeNewsMediaObject(
   tx: Bun.SQL,
@@ -965,14 +1060,31 @@ export async function purgeNewsMediaObject(
   actorTenantUserId: string,
   id: string,
   correlationId?: string
-): Promise<boolean> {
-  const rows = (await tx`
-    DELETE FROM awcms_news_media_objects
-    WHERE tenant_id = ${tenantId} AND id = ${id} AND deleted_at IS NOT NULL
-    RETURNING object_key
-  `) as { object_key: string }[];
+): Promise<PurgeNewsMediaObjectResult> {
+  await tx.unsafe(`SAVEPOINT ${PURGE_SAVEPOINT}`);
 
-  if (rows.length === 0) return false;
+  let rows: { object_key: string }[];
+
+  try {
+    rows = (await tx`
+      DELETE FROM awcms_news_media_objects
+      WHERE tenant_id = ${tenantId} AND id = ${id} AND deleted_at IS NOT NULL
+      RETURNING object_key
+    `) as { object_key: string }[];
+
+    await tx.unsafe(`RELEASE SAVEPOINT ${PURGE_SAVEPOINT}`);
+  } catch (error) {
+    await tx.unsafe(`ROLLBACK TO SAVEPOINT ${PURGE_SAVEPOINT}`);
+
+    if (isForeignKeyViolation(error)) {
+      return { ok: false, reason: "still_referenced" };
+    }
+    throw error;
+  }
+
+  if (rows.length === 0) return { ok: false, reason: "not_purgeable" };
+
+  const objectKey = rows[0]!.object_key;
 
   await recordAuditEvent(tx, {
     tenantId,
@@ -982,10 +1094,10 @@ export async function purgeNewsMediaObject(
     resourceType: AUDIT_RESOURCE_TYPE,
     resourceId: id,
     severity: "warning",
-    message: `News media object purged: ${rows[0]!.object_key}.`,
-    attributes: { objectKey: rows[0]!.object_key },
+    message: `News media object purged: ${objectKey}.`,
+    attributes: { objectKey },
     correlationId
   });
 
-  return true;
+  return { ok: true, objectKey };
 }

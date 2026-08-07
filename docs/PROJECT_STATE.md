@@ -38,9 +38,14 @@ Model tata kelola dipakai-langsung/tanpa-repo-turunan (ADR-0034 §2/§3) **tidak
 
 **Perubahan 31 Juli 2026 — dua ADR yang mengubah cara kerja, bukan cuma isi kode:**
 
-- [ADR-0047](adr/0047-mini-micro-frozen-foundation-built-here.md): `awcms-mini` dan
-  `awcms-micro` **dibekukan sebagai referensi** (boleh dibaca & di-port _keluar_, tidak
-  menerima perubahan). Konsekuensinya aturan **mini-first ditangguhkan** — selama
+- ~~ADR-0047~~ (`awcms-mini`/`awcms-micro` dibekukan sebagai referensi yang MASIH boleh
+  di-port keluar) — **di-supersede [ADR-0055](adr/0055-development-confined-to-awcms-and-awcms-astro.md)
+  pada 2 Agustus 2026**: pengembangan kini hanya di `ahliweb/awcms` +
+  `ahliweb/awcms-astro`, dan mini/micro adalah **arsip** (bukan sumber port). Penjagaan
+  ADR-0047 §3 TETAP; hanya kewajiban §4 (catat divergence saat mendarat) yang dicabut —
+  ADR-nya sendiri kini catatan itu. Konteks aslinya dipertahankan di bawah:
+  `awcms-mini` dan `awcms-micro` dibekukan sebagai referensi (boleh dibaca & di-port
+  _keluar_, tidak menerima perubahan). Konsekuensinya aturan **mini-first ditangguhkan** — selama
   pembekuan, fitur fondasi **dirintis langsung di repo ini**. Ini **bukan** pelonggaran:
   ADR §3 mendaftarkan ulang setiap penjagaan yang dulu dibawa jalur mini-first secara
   eksplisit (ADR wajib untuk perubahan standar, security review tambahan untuk
@@ -48,22 +53,91 @@ Model tata kelola dipakai-langsung/tanpa-repo-turunan (ADR-0034 §2/§3) **tidak
   ABAC default-deny). ADR §4: **setiap fitur fondasi yang mendarat selama pembekuan
   WAJIB dicatat sebagai divergence** di `awcms-family-compatibility.yaml` **saat ia
   mendarat**, bukan belakangan.
-- [ADR-0048](adr/0048-frontend-role-split-awcms-astro-internal-admin.md): pembagian peran
-  frontend. Layar **platform/operator internal** (master data global, rilis/rollback data,
-  kesehatan lintas tenant) dibangun di **`awcms-astro`**; layar **tenant atas datanya
-  sendiri** + seluruh permukaan publik tetap di **`awcms`**. Permukaan otorisasi tetap
-  SATU — memindahkan layar tidak memindahkan izinnya. Aturan ini mengikat layar **baru**;
-  pemilahan `/admin/*` yang sudah ada adalah pekerjaan tersendiri dengan ADR sendiri.
+- ~~ADR-0048~~ (pembagian peran frontend: layar platform/operator internal dibangun di
+  `awcms-astro`) — **di-supersede [ADR-0051](adr/0051-admin-screens-consolidated-in-awcms.md)
+  pada 1 Agustus 2026**, lihat butir berikutnya. Peran `awcms-astro` sebagai experience
+  layer + BFF (ADR-0045) tidak ikut berubah.
+
+**Perubahan 1 Agustus 2026 — seluruh layar admin dibangun di sini:**
+
+- [ADR-0051](adr/0051-admin-screens-consolidated-in-awcms.md): **setiap layar admin —
+  tenant maupun owner/internal/platform — dibangun di repo ini**, di bawah satu shell
+  `/admin/*`. Alasan yang mengubah substansinya: **memindahkan layar tidak pernah menjadi
+  kontrol keamanan.** `sql/081` men-seed `idn_admin_regions.dataset.configure`/`.restore`
+  ke katalog ABAC global dan `POST /api/v1/setup/initialize` memberikan seluruh katalog ke
+  role `owner` tiap tenant baru — jadi owner tenant biasa SUDAH memegang wewenang mengganti
+  dataset yang dilayani ke seluruh tenant, persis risiko yang ADR-0048 ingin cegah, karena
+  ABAC mengevaluasi permission bukan asal-usul frontend. Gerbang penggantinya normatif:
+  aksi lintas-tenant **wajib** punya gerbang platform-scoped dan **tidak boleh** masuk
+  katalog yang di-seed ke role tenant.
+- [ADR-0052](adr/0052-idn-region-dataset-lifecycle-is-an-operator-job.md) menutup temuan
+  terbuka itu di kode: aktivasi/rollback dataset wilayah jadi **job operator**
+  (`bun run idn-regions:activate` / `:rollback`, dry-run default), endpoint HTTP-nya
+  dihapus, dan kedua permission dicabut dari katalog (`sql/084`). Menggerbanginya dengan
+  kredensial mesin DITOLAK: kredensial mesin baca-saja (ADR-0049), jadi melebarkannya
+  justru membuat token build yang bocor bisa mengganti dataset global. Biaya yang
+  diterima & dinyatakan: baris audit hilang, karena `awcms_audit_events` tenant-scoped
+  sedangkan aksinya global.
 
 ## 2. Inventori ringkas
 
-| Aspek      | Nilai (per commit ini)                                                    | Sumber kebenaran                                      |
-| ---------- | ------------------------------------------------------------------------- | ----------------------------------------------------- |
-| Versi      | **6.4.0** (2026-07-26); 0 changeset menunggu                              | `package.json`, `CHANGELOG.md`, tag `v*`              |
-| Modul base | **22** (lihat daftar di ARCHITECTURE.md)                                  | `src/modules/index.ts`                                |
-| Migrasi    | **85** (`sql/001`–`085`)                                                  | `ls sql/`                                             |
-| ADR        | **0000**–**0050** (`0000` = template)                                     | `docs/adr/README.id.md` (indeks ter-gate)             |
-| Kontrak    | OpenAPI modular per-modul + AsyncAPI; `MODULE_CONTRACT_VERSION` **2.4.0** | `openapi/`, `asyncapi/`, `_shared/module-contract.ts` |
+<!-- project-state-inventory:mulai -->
+
+<!-- Dihasilkan `bun run project-state:inventory:generate`. JANGAN diedit tangan; gerbangnya `bun run project-state:inventory:check`. -->
+
+| Aspek | Nilai (ter-generate) | Sumber kebenaran |
+| --- | --- | --- |
+| Versi | **7.0.0** | `package.json` |
+| Changeset menunggu (per tipe bump) | _jalankan perintah di kolom kanan_ | `grep -h '^"awcms":' .changeset/*.md \| sort \| uniq -c` |
+| Commit sejak rilis terakhir | _jalankan perintah di kolom kanan_ | `git rev-list --count v7.0.0..HEAD` |
+| Modul base | **22** (lihat daftar di ARCHITECTURE.md) | `src/modules/index.ts` |
+| Migrasi | **92** (`sql/001`–`092`) | `ls sql/` |
+| ADR | **0000**–**0069** (`0000` = template; status ADR tertinggi: **Accepted**) | `ls docs/adr/` |
+| Layar admin | **31** berkas `.astro` di `src/pages/admin/`; **1 dari 22** modul tanpa `navigation:` (`duty-travel`) | `find src/pages/admin -name '*.astro'`, `grep -L 'navigation:' src/modules/*/module.ts` |
+| Berkas `.astro` | **42** (22.328 baris) — soal typecheck lihat §6 | `find src -name '*.astro'` |
+| Gerbang | **34** di rantai `bun run check` | `scripts.check` di `package.json`, dipisah pada `&&` |
+| Kontrak | OpenAPI modular per-modul + AsyncAPI; `MODULE_CONTRACT_VERSION` **2.5.0** | `openapi/`, `asyncapi/`, `_shared/module-contract.ts` |
+
+<!-- project-state-inventory:selesai -->
+
+> **Angka tabel ini pernah basi tanpa ada yang merah.** Sebelum PR #339 barisnya
+> berbunyi "20 berkas / 7 dari 21 modul" sementara `main` sudah memuat 22 berkas dan
+> hanya 6 modul tanpa `navigation`, dan baris ADR berhenti di `0052` padahal `0055`
+> sudah mendarat. Tak ada gerbang yang memeriksa tabel ini — kolom "Sumber kebenaran"
+> kini memuat perintah yang **menghasilkan** angkanya, jadi memverifikasinya butuh satu
+> tempel, bukan satu penghitungan manual.
+>
+> **Dan ia basi lagi dalam satu hari, di baris yang PR #339 tidak sentuh.** Baris
+> Versi berbunyi "53 changeset menunggu" sementara `.changeset/` memuat **68**.
+> Selisihnya bukan kosmetik: salah satunya bertipe `major`, jadi rilis berikutnya
+> adalah **`v7.0.0`**, bukan `6.5.0` — angka yang salah di sini menyesatkan
+> perencanaan rilis, bukan cuma pembaca. Kolom "Sumber kebenaran" baris itu kini
+> memuat perintah yang menghitungnya per tipe bump.
+>
+> **Dan basi untuk KETIGA kalinya, di baris yang sama, sembilan hari kemudian.**
+> Asesmen putaran kedua (4 Agustus 2026) menemukan **100** changeset, bukan 68 —
+> dan tiga baris lain ikut basi: ADR berhenti di `0060` padahal `0067` sudah ada,
+> `MODULE_CONTRACT_VERSION` tertulis `2.4.0` padahal sumbernya `2.5.0`. Pola ini
+> tidak akan berhenti dengan menuliskan angka yang lebih baru; ia berhenti hanya
+> bila tabel ini **di-generate**. Sampai itu terjadi: **jangan pernah mengutip
+> tabel ini sebagai fakta — jalankan perintah di kolom kanan.** Untuk angka yang
+> memang sudah ter-generate, pakai
+> [`awcms/repo-inventory.md`](awcms/repo-inventory.md). Putaran ketiga
+> (5 Agustus 2026) menemukan episode **keempat** pada baris yang sama —
+> changeset 100→101, commit 108→113 — plus baris ADR yang berhenti di `0067`
+> padahal `0068` sudah `Accepted`; instruksi di atas berlaku tanpa pengecualian.
+>
+> **Penutup (5 Agustus 2026): episode keempat menjadi yang terakhir.** Kebasian
+> keempat itu (changeset 100→101, commit 108→113, baris ADR) adalah alasan tabel
+> ini akhirnya **di-generate**: `bun run project-state:inventory:generate`
+> menulis blok di antara marker, dan `bun run project-state:inventory:check` di
+> rantai `check` memerahkan CI bila ia basi. Baris CEPAT — jumlah changeset per
+> tipe bump dan jumlah commit sejak rilis — **dihapus angkanya**, bukan
+> di-generate: angka yang bergerak tiap commit di dokumen ter-versioning akan
+> selalu basi, dan menggerbanginya berarti memaksa tiap PR meregenerasi dokumen
+> ini. Sel nilainya kini menyuruh menjalankan perintah di kolom kanan, yang
+> dipertahankan (ini cabang "dihapus dari tabel" dari usulan blockquote di
+> atas). Ketiga blockquote sejarah di atas sengaja dipertahankan apa adanya.
 
 > **Rilis:** `v6.0.0` (2026-07-21) adalah **rilis nyata pertama** yang menjalankan
 > `.github/workflows/release.yml` end-to-end (validate → build+SBOM×2 → sign/attest/publish,
@@ -76,7 +150,7 @@ Model tata kelola dipakai-langsung/tanpa-repo-turunan (ADR-0034 §2/§3) **tidak
 > job pause di "Waiting for review" sebelum sign/attest/publish (lihat
 > [`release-process.md`](awcms/release-process.md) §Environment approval).
 
-Modul (22, urutan `src/modules/index.ts`): `logging`, `tenant-admin`,
+Modul (21, urutan `src/modules/index.ts`): `logging`, `tenant-admin`,
 `profile-identity`, `identity-access`, `module-management`, `domain-event-runtime`,
 `sync-storage`, `workflow-approval`, `email`, `reporting`, `theming`,
 **`media-library`**, `blog-content`, **`tenant-domain`**, **`visitor-analytics`**,
@@ -86,11 +160,17 @@ Modul (22, urutan `src/modules/index.ts`): `logging`, `tenant-admin`,
 `news-portal` **tidak lagi ada**: dilebur ke `blog-content` oleh
 [ADR-0044](adr/0044-merge-news-portal-into-blog-content.md), #300.
 `idn-admin-regions` (#312, ADR-0046) **bukan** hasil port — ia modul pertama yang
-dirintis langsung di sini setelah pembekuan ADR-0047.)
+dirintis langsung di sini setelah pembekuan ADR-0047. `duty-travel` adalah modul domain
+SiPerdin Dinkes Kobar Fase 1 MVP yang ditambahkan langsung di template ini.)
 
-> Catatan: generator `repo:inventory` **belum diport** dari `awcms-mini`, jadi
-> [`awcms/repo-inventory.md`](awcms/repo-inventory.md) adalah placeholder — jangan
-> jadikan sumber angka. Gunakan ARCHITECTURE.md / registry / `sql/`.
+> Catatan: [`awcms/repo-inventory.md`](awcms/repo-inventory.md) kini
+> **ter-generate** (`bun run repo:inventory:generate`, gerbang `:check` di rantai
+> `check`) — angka modul/migrasi/tabel-RLS/test/route di sana diturunkan dari
+> repo, jadi ia boleh dipakai sebagai sumber angka. Tabel §2 di atas kini
+> mengikuti pola yang sama (`bun run project-state:inventory:generate`, gerbang
+> `project-state:inventory:check` di rantai `check`): baris di antara marker
+> diturunkan dari repo, dan dua baris cepat sengaja tanpa angka — jalankan
+> perintah di kolom "Sumber kebenaran".
 
 ## 3. Yang sudah selesai (jangan dibangun ulang)
 
@@ -198,24 +278,441 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
   terdaftar di `GLOBAL_TABLE_FORBIDDEN_PRIVILEGES`), otorisasi tetap per-tenant
   default-deny. Impor = job deployment dry-run-by-default (`bun run idn-regions:import`,
   `awcms_worker`); aktivasi/rollback = aksi admin ter-audit ber-idempotency-key. Modul
-  pertama yang **dirintis langsung di sini** (bukan port) di bawah ADR-0047, dan sengaja
-  **tanpa `navigation`** — layar operatornya milik `awcms-astro` (ADR-0048).
+  pertama yang **dirintis langsung di sini** (bukan port) di bawah ADR-0047. Sengaja
+  **tanpa `navigation`**, dan alasannya kini berubah: bukan lagi "layarnya milik
+  `awcms-astro`" (ADR-0048, sudah di-supersede) melainkan karena ADR-0052 memindahkan
+  aktivasi/rollback ke job operator — yang tersisa untuk tenant hanyalah dua permission
+  baca.
 - **Kredensial mesin baca-saja + introspeksi sesi** ([ADR-0049](adr/0049-machine-credentials-and-session-introspection.md),
   `sql/082` skema + `sql/083` permission) — bearer KEDUA yang bukan sesi manusia, terikat
   ke satu service account. Rinci di §4 dan di `src/modules/identity-access/README.md`.
-- **`duty-travel` / SiPerdin Dinkes Kobar** (`sql/084` skema + `sql/085` permission) —
+- **`duty-travel` / SiPerdin Dinkes Kobar** (`sql/091` skema + `sql/092` permission) —
   modul domain Fase 1 MVP yang dibangun langsung di `src/modules/`: request ST tanpa biaya
   dan ST+SPPD, lifecycle approval, dokumen, budget line, bukti/laporan, dashboard counter
-  awal, OpenAPI fragment, dan endpoint awal `/api/v1/duty-travel/*`. Dicatat sebagai
-  divergence sengaja di `awcms-family-compatibility.yaml` karena dibangun di sini selama
-  freeze ADR-0047.
+  awal, OpenAPI fragment, dan endpoint awal `/api/v1/duty-travel/*`.
+- **Gelombang layar admin (1–2 Agustus 2026, PR #321–#330).** Audit permukaan admin
+  menemukan **13 dari 21 modul tanpa satu pun layar** — 125 berkas route yang hanya bisa
+  dipakai lewat `curl`. [ADR-0051](adr/0051-admin-screens-consolidated-in-awcms.md)
+  memutuskan seluruhnya dibangun di sini; sembilan PR atomic mendarat berurutan:
+  `/admin/audit-trail` (#324, `logging`), `/admin/form-drafts` (#325),
+  `/admin/site-search` (#322), `/admin/theming` (#327), `/admin/seo` (#329),
+  `/admin/data-lifecycle` (#330), plus perbaikan dashboard sync zero-node (#323) dan
+  ADR-0052/`sql/084` (#328). **Nol migrasi** untuk layarnya sendiri — permukaan
+  otorisasinya sudah ada, yang hilang hanya layarnya.
+  Pola yang dipakai seragam dan patut diikuti layar berikutnya: baca lewat fungsi
+  aplikasi modul sendiri di **satu** `withTenantOrThrow` (await berurutan — query paralel
+  di satu koneksi transaksi membocorkannya), tulis lewat endpoint ter-guard dengan
+  `Idempotency-Key` segar per klik, gerbang permission di halaman **UX-only** (endpoint
+  tetap otoritasnya), entri `navigation` mendarat di PR yang SAMA (entri tanpa halaman =
+  404 permanen di menu, digerbangi `tests/admin-navigation-registry.test.ts` dua arah),
+  dan satu `tests/admin-<modul>-page-contract.test.ts` yang mengikat tiap key halaman ke
+  yang route tegakkan DAN descriptor deklarasikan — penangkal bug latent-authz yang repo
+  ini sudah dua kali kirim. `/admin/data-lifecycle` menambah satu pelajaran khusus:
+  `legal_hold.create` dan `.release` digerbangi **terpisah**, karena SoD menjadikan
+  memegang keduanya konflik `critical` — satu gerbang gabungan yang terlihat lebih rapi
+  justru salah untuk setiap operator nyata.
+- **Gelombang layar admin kedua (2 Agustus 2026, PR #335–#338).** Empat modul yang
+  gelombang pertama tinggalkan mendapat layarnya: `/admin/reporting` (#335, seluruh
+  mesin proyeksi/ekspor Issue #753 + view `email-health` yang tak pernah dirender),
+  `/admin/approvals` (#336, inbox + recovery + delegasi), `/admin/domain-events`
+  (#337, consumer/delivery/outbox) dan `/admin/sync` (#338, node/conflict/object
+  queue). **Nol migrasi** lagi — permukaan otorisasinya sudah ada.
+  Tiga hal yang layar berikutnya harus tiru:
+  - **Konstanta bound di-hoist ke `domain/`, lalu diimpor DUA arah** (route yang
+    memvalidasinya dan form yang merendernya sebagai `min`/`max`/`maxlength`).
+    `MAX_REASON_LENGTH` ditulis ulang sebagai `500` telanjang di **lima** berkas
+    `workflow-approval` dan dua di `domain-event-runtime`; lima salinan sebuah angka
+    sepakat sampai salah satunya diedit, dan salinan keenam di markup berarti browser
+    menerima apa yang server tolak dengan 400 yang tak bisa ditindak operator.
+  - **Satu fungsi baca dipakai bersama halaman DAN endpoint.** `/admin/sync` menambah
+    `fetchSyncConflicts` ke `sync-directory.ts` dan me-repoint
+    `GET /api/v1/sync/conflicts` ke sana. Jebakannya: fungsi itu mengembalikan `null`
+    untuk kolom resolusi yang kosong (bentuk yang diinginkan halaman) sedangkan
+    endpoint selama ini MENGHILANGKAN key-nya (`?? undefined`), jadi route memetakan
+    balik — `null` di tempat klien menunggu key absen itu perubahan kontrak, bukan
+    refactor.
+  - **Permukaan yang bukan untuk browser tidak diberi kontrol.** `/admin/sync` sengaja
+    tak menyentuh `push`/`pull`/`objects`/`status`: itu protokol NODE ber-HMAC, bukan
+    sesi administrator, dan tombolnya akan jadi kontrol yang tak bisa dipakai browser
+    mana pun — kegagalannya terbaca sebagai bug, bukan salah kategori.
+
 - **Dua environment ter-deploy nyata** — produksi `awcms.ahlikoding.com`, staging
   `awcms-staging.ahlikoding.com` (Coolify, host yang sama, DB & secret terpisah). Staging
-  ter-migrasi penuh (69) dan berjalan sebagai role least-privilege terpisah. Rincian,
+  ter-migrasi penuh (69 per 2026-07-26; repo kini memuat 90 migrasi — angka ini bergerak,
+  verifikasi dengan `ls sql/`) dan berjalan sebagai role least-privilege terpisah. Rincian,
   termasuk jebakan "user Coolify itu superuser sehingga RLS inert", di
   [`awcms/environments.md`](awcms/environments.md).
 
 ## 4. Backlog / langkah berikutnya
+
+- **ASESMEN MENYELURUH 4 Agustus 2026 — [`awcms/repo-assessment-2026-08-04.md`](awcms/repo-assessment-2026-08-04.md).**
+  Repo dinilai terhadap empat sumbu (standar AWCMS, hubungan `awcms-astro`, performa
+  internasional, keamanan internasional). Tujuh rekomendasi berperingkat.
+
+  > **PUTARAN 1 SELESAI — enam dari tujuh mendarat di hari yang sama.**
+  > ADR-0063 (#380) chokepoint per-handler, `overrides` postcss (#381),
+  > ADR-0064 (#382) gerbang index-FK, ADR-0065 (#383) kontrak konsumen beku,
+  > ADR-0066 (#384) rate limit berbagi lewat Redis, anggaran query (#385).
+  > Yang ketujuh — Core Web Vitals — sengaja **tidak** mendarat: ia jadi
+  > [ADR-0067](adr/0067-core-web-vitals-collection.md) `Proposed` yang menunggu
+  > keputusan pemilik produk. Teks P0/P1 di bawah dipertahankan sebagai konteks;
+  > jangan dibaca sebagai pekerjaan tersisa.
+
+  > **PUTARAN 2 — tiga belas temuan baru, [`§9 dokumen asesmen`](awcms/repo-assessment-2026-08-04.md).**
+  > Dinilai ulang SETELAH keenam perbaikan masuk. Empat teratas, yang mengubah
+  > backlog:
+  >
+  > 1. **SELESAI (commit 769292d7, celah C1 DITUTUP).** Teks asli dipertahankan
+  >    sebagai konteks: `scripts/validate-env.ts` kini menolak produksi dengan
+  >    `AUTH_COOKIE_SECURE !== "true"` — termasuk saat variabel **tidak diset**
+  >    (gagal-tertutup); keadaan-absen digerbangi `tests/validate-env.test.ts`.
+  >    **`AUTH_COOKIE_SECURE` gagal-TERBUKA saat tidak diset.** Aturan produksi
+  >    di `validate-env.ts` hanya menolak string literal `"false"`, sementara
+  >    runtime menuntut `"true"` — jadi variabel yang **tidak diset** memberi
+  >    cookie sesi tanpa `Secure` dengan `config:validate` hijau. Tetangganya di
+  >    berkas yang sama (`TRUSTED_PROXY_ENABLED`) justru memerahkan saat kosong.
+  > 2. **CATATAN (5 Agustus 2026): temuan ini di-reframe, C3 diturunkan.**
+  >    Pembaca produksi/staging TERNYATA menerima gzip — dari Cloudflare, karena
+  >    kedua host proxied (`Cloudflare (proxied) → Traefik :443 → varnish:80 → app`,
+  >    [`awcms/environments.md`](awcms/environments.md) §Cache tepi). Yang tersisa
+  >    dan tetap benar: repo ini sendiri tak mengompresi apa pun, kompresinya
+  >    diwarisi dari lapisan yang tak diperiksa gerbang mana pun, dan deployment
+  >    template di luar CDN pengompresi tidak mendapat kompresi. Teks asli:
+  >    **Tidak ada kompresi respons di mana pun** — bukan di aplikasi, bukan di
+  >    `infra/varnish/default.vcl` (nol kemunculan `gzip`), bukan sebagai
+  >    middleware Traefik yang dideklarasikan. Sementara itu
+  >    `edge-cache/response-headers.ts` sudah memancarkan `Vary: Accept-Encoding`
+  >    — janji tanpa penepat. Diukur: aset teks `dist/client` 139 KB → 49,7 KB
+  >    (2,79×), dan HTML/JSON/sitemap kompres lebih baik lagi.
+  > 3. **CATATAN (5 Agustus 2026): TERBLOKIR eksternal.** `@astrojs/check`
+  >    menuntut API TypeScript 6.x sedangkan repo sudah di 7.0.2 — celah C4
+  >    tak bisa ditutup dari sini hari ini; keadaan itu dicatat sebagai
+  >    divergence keluarga di ADR-0068 §C (`awcms-family-compatibility.yaml`,
+  >    reviewDate 2027-02-04). Teks asli:
+  >    **42 berkas `.astro` (22.328 baris) tidak pernah diperiksa tipe.** `tsc`
+  >    tidak bisa mengurai `.astro` dan melewatinya diam-diam; `@astrojs/check`
+  >    tidak terpasang. `awcms-astro` menjalankan `astro check`; repo ini —
+  >    dengan berkas `.astro` jauh lebih banyak — tidak.
+  > 4. **SELESAI (ADR-0068, celah C8 DITUTUP).** `scripts/api-consumer-contract.ts`
+  >    kini memisahkan `CONSUMED_PATHS` (3: `/api/v1/blog/posts`,
+  >    `/api/v1/media/objects`, `/api/v1/media/public-origin`) dari
+  >    `COMMITTED_PATHS` (2: `/api/v1/auth/session`,
+  >    `/api/v1/access/machine-credentials`, tiap entri ber-ADR) — ADR-0065 +
+  >    ADR-0068. Teks asli:
+  >    **Kontrak konsumen membekukan enam permukaan; `awcms-astro` memanggil
+  >    tiga.** Daftar di sana diekstrak dari kode **dengan komentar dibuang** dan
+  >    digerbangi dua arah; daftar di sini disusun dengan mem-grep repo sana
+  >    tanpa membuang komentar, sehingga tiga entri membekukan panggilan yang
+  >    tidak pernah terjadi (satu di antaranya dihapus ADR-0018 di repo sana).
+  >
+  > Status kontrol pindah ke dokumen yang memang dirancang untuk dimutakhirkan:
+  > [`awcms/standar-performa-dan-keamanan.md`](awcms/standar-performa-dan-keamanan.md)
+  > — peta kontrol ↔ standar (OWASP Top 10 2021 / API Top 10 2023 / ASVS 4.0.3 /
+  > ISO 27001:2022 / ISO 25010 / NIST SSDF / RFC 9111 / Core Web Vitals), tiga
+  > belas celah ber-pemeriksa, dan daftar kontrol yang **sengaja ditolak**.
+  - **P0 (SELESAI, ADR-0063) — satu rute MELEWATI chokepoint otorisasi.**
+    `POST /api/v1/blog/posts/{id}/submit-review` tidak memanggil
+    `authorizeInTransaction` sama sekali; ia menyusun jalurnya sendiri
+    (`fetchGrantedPermissionKeys` + `evaluatePostUpdateAccess`). Yang dilewati:
+    **evaluator ABAC** (`evaluateAccess`), gerbang platform-scope (ADR-0053),
+    business-scope facts (ADR-0060), dan SoD (#181). Akibat konkretnya —
+    **policy ABAC `deny` atas `blog_content.posts.update` dihormati di
+    `PATCH /{id}` dan diam-diam diabaikan di rute ini.** Severity moderat (blast
+    radius sempit, RBAC + aturan kepemilikan tetap berlaku); yang serius adalah
+    KELASNYA. `access:permissions:enforcement:check` tak bisa melihatnya: ia
+    bertanya "apakah permission ini punya penegak", bukan "apakah setiap situs
+    penegakan memakai chokepoint" — pengulangan persis pelajaran PR #351.
+    Perbaikannya dua bagian: routekan lewat chokepoint, DAN gerbangi kelasnya.
+    Himpunan pelanggar hari ini **tepat dua** berkas, satu di antaranya
+    (`auth/login.ts`) memang pra-autentikasi — jadi daftar pengecualiannya lahir
+    dengan satu entri.
+  - **P1 (SELESAI, ADR-0065) — kontrak yang dipakai `awcms-astro` tidak dijaga test apa pun.**
+    Snapshot OpenAPI beku adalah snapshot **PRA-migrasi #182**, sedangkan kelima
+    permukaan yang benar-benar dikonsumsi repo itu mendarat SESUDAHNYA
+    (`/auth/session`, `/media/objects`, `/media/public-origin`,
+    `/access/machine-credentials`, dan traversal `/blog/posts`). Diverifikasi: nol
+    kemunculan di berkas snapshot. Mengubah bentuk respons salah satunya **hijau di
+    CI sini dan merusak build repo sana** — kegagalan yang muncul di tempat orang
+    yang menyebabkannya tidak melihat. Perbaikan: snapshot kontrak KONSUMEN kedua
+    (jangan perluas yang pra-migrasi — tugasnya berbeda dan ia harus tetap beku).
+  - **P1 (SELESAI, ADR-0066) — rate limiter tidak bertahan lintas instans.** `src/lib/security/rate-limit.ts`
+    memakai `Map` dalam-proses (berkasnya sendiri mencatatnya): dengan N replika,
+    batas efektif jadi N × batas terkonfigurasi, sehingga deployment yang paling
+    butuh perlindungan justru paling lemah. Redis SUDAH ada di repo. Tiga endpoint
+    autentikasi belum ber-limiter sama sekali (`session-handoff/issue`/`redeem`,
+    `sso/{providerKey}/callback`) — kelengkapan, bukan lubang (masing-masing punya
+    mitigasi lain), tapi ASVS menuntut anti-automation di seluruh permukaan auth.
+
+  Catatan asesmen yang masih berlaku, dan sekarang dengan angka yang lebih
+  tepat: dari **34** gerbang rantai `check` (per tabel §2 yang kini
+  ter-generate), **satu** memeriksa performa
+  (`db:fk-index:check`). Anggaran query (#385) hidup sebagai **test integrasi
+  DB-gated**, bukan gerbang rantai — pada mesin tanpa PostgreSQL ia di-`skip`
+  dan `bun run check` tetap hijau. Cakupannya pun hanya jalur baca publik blog:
+  31 layar admin dan pembangun sitemap belum beranggaran.
+
+- **Layar admin yang masih kosong (lanjutan langsung ADR-0051).** Gelombang kedua
+  (PR #335–#338, 2 Agustus 2026) menutup EMPAT dari tujuh — verifikasi ulang dengan
+  `grep -L 'navigation:' src/modules/*/module.ts`, bukan dari daftar ini:
+  - ~~`reporting`~~ **SELESAI (#335)** — `/admin/reporting`. Bukan dashboard kedua:
+    `/admin` sudah merender empat dari lima view, jadi layar ini mengambil seluruh
+    mesin proyeksi/ekspor Issue #753 **plus** `email-health`, satu-satunya view yang
+    tak pernah dirender di mana pun.
+  - ~~`workflow-approval`~~ **SELESAI (#336)** — `/admin/approvals` (inbox + recovery
+    - delegasi). Enam permission `definition.*` **sengaja ditinggalkan**: menyusun
+      node graph butuh editor sungguhan, dan textarea JSON yang menerima graph rusak
+      sampai `publish` menolaknya lebih buruk daripada tak ada sama sekali. Contract
+      test menegakkan bahwa keenamnya TIDAK bocor ke layar ini, sehingga pemisahan itu
+      tetap keputusan, bukan celah.
+  - ~~`domain-event-runtime`~~ **SELESAI (#337)** — `/admin/domain-events`.
+  - ~~`sync-storage`~~ **SELESAI (#338)** — `/admin/sync`.
+  - ~~`blog-content`~~ **SELESAI (#340)** — `/admin/blog`, konsol siklus hidup post
+    (sebelas permission dari 43). Sisanya menunggu layar saudaranya (pages,
+    taxonomy, presentation, settings, homepage) — **`pages` ternyata butuh
+    permukaannya lebih dulu**, lihat entri ADR-0057 di bawah. Dua absen yang digerbangi contract
+    test karena BEDA KELAS: `posts.export` dideklarasikan + di-seed `sql/036` dan
+    **tak ada endpoint mana pun yang menegakkannya**; `search.read` punya rute tapi
+    daftar admin sudah punya pencarian sendiri yang mentoleransi query kosong.
+  - ~~`media-library`~~ **SELESAI (#345)** — `/admin/media`. Dan ini bukan sekadar
+    layar ([ADR-0056](adr/0056-media-library-admin-surface.md)): lima dari sebelas
+    permission-nya tidak digerbangi apa pun (`attach`/`detach`/`delete`/`restore`/
+    `purge`), lima fungsi aplikasi yang memanggilnya nol, dan tidak ada fungsi
+    `list*` sama sekali — `GET /api/v1/media/objects` menuntut `?ids=`, ia resolver
+    batch untuk build `awcms-astro`. ADR-0056 memecahnya tiga: cabut
+    `attach`/`detach` (usang sejak inversi ADR-0036), beri permukaan
+    `delete`/`restore`/`purge` (lubang nyata), tambah rute daftar sendiri. Layar
+    menyusul SETELAH ketiganya.
+
+    **Kemajuan: §A + §B SELESAI.** §B memberi `delete`/`restore`/`purge`
+    endpoint ter-guard, ter-audit, ber-`Idempotency-Key`
+    (`DELETE /api/v1/media/objects/{id}`, `.../{id}/restore`, `.../{id}/purge`).
+    Nol permission `media_library` kini tak-tergerbangi. `purge` memurnikan
+    REGISTRY saja — job rekonsiliasi tetap satu-satunya penulis bucket — dan
+    berjalan dalam SAVEPOINT karena FK keras dari
+    `awcms_news_portal_ad_placements` membuat `23503` MEMBATALKAN transaksi
+    (tanpa savepoint, 409 yang bisa ditindaklanjuti berubah jadi 500 saat
+    COMMIT).
+
+    **§C SELESAI juga.** `listMediaObjects` (keyset, 50/halaman) +
+    `GET /api/v1/media/objects/list` — rute SENDIRI, bukan mode-ganda pada
+    `?ids=`. Sebelumnya lapisan aplikasi hanya punya point lookup, jadi layar
+    browse memang TIDAK BISA dibangun di atas permukaan lama, apa pun kata
+    permission-nya. Daftar ini sengaja MELAMPAUI aturan aman resolver (status
+    apa pun, plus soft-deleted bila diminta): justru objek tak-sehat itulah
+    alasan administrator membukanya. `/list` tak bisa bentrok dengan id karena
+    rute `/{id}` kini menuntut uuid. Kursor membawa teks presisi mikrodetik —
+    integration test menyisipkan 107 baris dalam SATU statement lalu menyusuri
+    tiap halaman; mengembalikan kursor ke `Date` kehilangan 57 baris (jebakan
+    #158, dan registry media adalah tempat paling mungkin ia kambuh).
+
+    **Layar (#345).** Konsol siklus hidup objek: browse ber-filter, lalu
+    delete/restore/purge — empat permission, tiap mutasi ber-`Idempotency-Key`
+    baru (tak ada opt-out seperti `/admin/blog`, dan tak ada endpoint yang
+    menolak header seperti `/admin/sync`). TIGA absen sengaja, digerbangi
+    contract test agar tetap keputusan: **unggah** (`create`/`verify`/`cancel`)
+    — alur tiga langkah di browser, tombol yang memulai sesi tapi tak bisa
+    menuntaskannya meninggalkan baris `pending_upload` tiap salah klik;
+    **`enforcement.*`** — saklar kebijakan tenant SATU ARAH, bukan aksi objek,
+    tempatnya di `/admin/security`; dan **tanpa pratinjau `<img>`** — baris bisa
+    `pending_upload`/`failed`, bytes-nya mungkin tak ada, belum terverifikasi,
+    atau justru hal yang sedang dihapus operator.
+
+    **ADR-0056 SELESAI SELURUHNYA, dan dengan itu kriteria 1 ADR-0021 nol
+    pengecualian tak-disengaja** — `idn-admin-regions` satu-satunya modul tanpa
+    layar, dan itu memang keputusan (ADR-0052). Contract test layar ini ikut
+    menegakkannya lintas-modul, jadi modul berikutnya yang mendarat tanpa
+    `navigation` memerahkan CI alih-alih diam-diam menambah pengecualian.
+
+    > **Temuan sampingan, sudah diperbaiki di PR yang sama.** SQLSTATE Postgres
+    > ada di `error.errno`, BUKAN `error.code` — Bun mengisi `code` dengan
+    > konstanta miliknya sendiri (`ERR_POSTGRES_SERVER_ERROR`) untuk SEMUA error
+    > server. Jadi `error.code === "23505"` bukan cek yang agak salah, melainkan
+    > cek yang TAK PERNAH bisa benar. Sepuluh situs di repo ini sudah benar
+    > (`String(error.errno)`); satu tidak: `tenant-provisioning.ts` —
+    > `POST /api/v1/tenants` menjanjikan 409 untuk `tenant_code` duplikat tapi
+    > menyajikan 500 pada kasus balapan (pre-check SELECT menutupi kasus biasa).
+    > Ditemukan dengan MEMPROBE database nyata, bukan dengan membaca; digerbangi
+    > `tests/postgres-sqlstate-detection.test.ts`.
+
+    **§A SELESAI.** `sql/087` mencabut `attach`/`detach` dari katalog
+    dan dari tiap grant role; dua fungsi nol-pemanggil dihapus. Modul kini
+    mendeklarasikan **9 permission (7 `media.*` + 2 `enforcement.*`)**, dan yang
+    belum tergerbangi tinggal **tiga**: `delete`/`restore`/`purge` — semuanya
+    tercakup §B. Status `attached` sengaja TIDAK ikut dicabut (CHECK `sql/041`
+    masih menerimanya, baris lama tetap resolve); yang hilang cuma kemampuan
+    menulisnya. ADR §A edisi pertama menulis "kelima fungsi mati dihapus" —
+    keliru, itu bertabrakan dengan §B yang justru memakai tiga di antaranya;
+    ADR sudah dikoreksi.
+
+    > **Koreksi angka di atas.** Entri sebelumnya (#339) menulis "**enam**...
+    > termasuk `verify`". Itu salah: `media.verify` DIGERBANGI — di dalam fungsi
+    > aplikasi `media-finalize-upload-session.ts`, bukan di berkas route. Memindai
+    > berkas route saja memberi jawaban salah di dua arah sekaligus, karena
+    > `media-object-directory.ts` juga penuh string `action: "..."` yang merupakan
+    > nama aksi AUDIT, bukan gerbang permission.
+
+  - **`blog-content` — empat layar saudara tersisa, dan `pages` BUKAN salah satu
+    layar yang cuma hilang halamannya** ([ADR-0057](adr/0057-blog-page-lifecycle.md)).
+    Audit `pages.*` sebelum menulis layarnya mengulang temuan ADR-0056, lebih
+    tajam: **empat dari delapan permission `pages.*` tidak digerbangi apa pun**
+    (`publish`/`archive`/`restore`/`purge`), dan tak seperti `media_library` —
+    yang fungsi aplikasinya ada tapi nol pemanggil — di sini fungsinya **tidak
+    ada sama sekali**.
+
+    Akibatnya fungsional, bukan sekadar permission menganggur: `createBlogPage`
+    menulis literal `'draft'`, `updateBlogPage` tak pernah menyentuh `status`
+    atau `published_at`, dan `blog-scheduled-publish.ts` hanya membaca
+    `awcms_blog_posts`. **Tidak ada penulis lain untuk
+    `awcms_blog_pages.status` di seluruh repo — sebuah page tidak pernah bisa
+    meninggalkan `draft`.** Itu sudah hidup di permukaan publik: `blog-search.ts`
+    menyaring cabang page dengan `status = 'published' … AND published_at IS NOT
+NULL`, jadi pencarian publik untuk page **selalu** nol baris — di atas index
+    `awcms_blog_pages_tenant_status_published_idx` yang `sql/035` bangun persis
+    untuk query itu.
+
+    ADR-0057 memberi keempatnya permukaan (bukan mencabutnya — mencabut
+    `pages.publish` memberkati cacat itu sebagai desain), dengan siklus hidup
+    yang sengaja **lebih sempit** dari post: tanpa `review`, tanpa `scheduled`,
+    karena `sql/036` tak pernah men-seed `pages.schedule`. `purge` **melaporkan,
+    tidak menolak**, jumlah ad placement yang jadi inert — draf pertama ADR itu
+    memilih 409, dan `ad-placement-reference-validation.ts` membantahnya: modul
+    itu sudah memutuskan target yang hilang belakangan "is not an error and never
+    becomes one", dan soft delete hari ini punya efek render yang sama persis.
+    **Nol migrasi** — kolom, CHECK,
+    index dan baris katalog sudah ada; yang hilang murni lapisan aplikasi + route.
+    Urutan mengikat: permukaan dulu, `/admin/blog-pages` menyusul.
+
+    **ADR-0057 SELESAI SELURUHNYA — tiga PR, nol migrasi.** Permukaan (#350):
+    empat rute ter-guard/ter-audit/ber-`Idempotency-Key` lewat
+    `defineTenantRoute`, plus `domain/page-status.ts` dan tiga fungsi directory.
+    Layar (#352): **`/admin/blog-pages`** menggerakkan **kedelapan** permission,
+    dua tampilan (hidup + bin), edit STRUKTUR (judul/slug/tipe/urutan menu)
+    bukan editor badan, tanpa re-parenting (API tak punya deteksi siklus).
+    Contract test-nya memuat satu asersi maju: permission `pages.*` KESEMBILAN
+    yang di-seed akan memerahkan CI, karena begitulah empat yang ini lolos
+    berbulan-bulan.
+
+- **Bug yang ditemukan dalam perjalanan, sudah diperbaiki (#351).** Tombol
+  **Restore** di `/admin/blog` (#340, enam hari sebelumnya) **tidak pernah bisa
+  bekerja**. `listBlogPostsForAdmin` menyaring keras `deleted_at IS NULL` dan
+  layar itu tak punya filter "deleted", jadi Restore digantungkan pada
+  `status === "archived"` — sumbu yang BERBEDA. Endpoint-nya menuntut
+  `canRestorePost` (`deleted_at IS NOT NULL`), sehingga tombolnya dirender
+  persis pada baris yang pasti 404 dan tak pernah pada baris yang akan
+  berhasil. Teks konfirmasi hapusnya bahkan menjanjikan sebaliknya
+  ("recoverable until it is purged"). Diperbaiki dengan filter `deletedOnly`
+  di kedua fungsi daftar admin + tampilan `?view=deleted` di kedua layar.
+
+  > **Gate §F TIDAK menangkap ini, dan itu batas yang perlu diketahui.** Ia
+  > bertanya "apakah permission ini punya penegak" — dan `posts.restore` punya;
+  > endpoint-nya ada dan benar. Yang salah adalah LAYAR memanggilnya pada baris
+  > yang salah. Itu lapisan contract-test per-layar, dan contract test yang ada
+  > tidak menanyakannya. Sekarang menanyakan, di kedua layar, mutation-proven.
+  > Pelajaran umumnya: gate cakupan permission dan contract test layar menjawab
+  > **dua pertanyaan berbeda**, dan sebuah kontrol bisa lulus yang pertama
+  > sambil mustahil dipakai.
+
+- **Gate cakupan permission — SELESAI SELURUHNYA, daftar pengecualiannya KOSONG
+  ([ADR-0058](adr/0058-unenforced-permissions-disposition.md), PR #359–#363).**
+  `bun run access:permissions:enforcement:check` (ADR-0057 §F) menuntut tiap
+  permission terdeklarasi punya call site `authorizeInTransaction` atau
+  terdaftar sebagai pengecualian ber-alasan. Murni (registry + teks sumber),
+  masuk rantai `check`. Skor: **203/203 tergerbangi, 0 pengecualian**.
+
+  Enam entri pertamanya habis, dan **tak satu pun dimaafkan**. ADR-0058
+  membelahnya jadi dua kelas yang berbeda — bukan satu:
+  - `profile_identity.profile_management.restore` — **PERMUKAAN** (§A, #361).
+    Lubang nyata: `party-directory.ts` mengekspor `softDeleteParty` tanpa
+    pasangan, jadi `restored_at`/`restored_by` (`sql/003`) tak pernah bisa
+    ditulis dan profil yang di-soft-delete permanen.
+  - `comments.moderation.delete` — **PERMUKAAN** (§B, #362). Seluruh mesinnya
+    ada sejak ADR-0041 (transisi legal dari keempat status non-terminal,
+    antrean bisa memfilter `deleted`); satu-satunya aktor yang bisa
+    memproduksinya adalah **penulis** komentar.
+  - `blog_content.seo.configure` — **DICABUT** (§C, `sql/089`). Sumbu otorisasi
+    KEDUA atas kolom yang `settings.configure` sudah kelola.
+  - `blog_content.posts.export` — **DICABUT** (§D, `sql/089`). Nol mesin ekspor
+    di mana pun; membangun fiturnya untuk membenarkan baris katalog adalah ekor
+    menggerakkan anjing.
+  - `visitor_analytics.settings.read`/`.update` — **BUKAN GAP** (#359), lihat
+    catatan di bawah.
+
+  Nilai daftar yang **kosong** lebih besar dari daftar yang pendek: pengecualian
+  BERIKUTNYA akan jadi satu-satunya entri di situ, jadi ia tak bisa lewat tanpa
+  terlihat di tengah daftar yang sudah tampak mapan.
+
+  > **Skor pertamanya 199/205 dengan 6 pengecualian, dan DUA di antaranya
+  > adalah bug gate-nya sendiri.** `visitor_analytics.settings.read`/`.update`
+  > **tergerbangi** — `src/pages/api/v1/analytics/settings.ts` membangun
+  > `READ_GUARD`/`UPDATE_GUARD` tepat pada activity itu. Yang salah: scanner
+  > membaca konstanta seluruh repo sebagai **satu namespace datar**, sementara
+  > `MODULE_KEY` terikat ke **empat nilai berbeda di lima berkas**, sehingga
+  > aturan "nama berkonflik = tak-terpecahkan" mematikannya di **semua** berkas
+  > — termasuk berkas yang mengikatnya sendiri satu baris di atas guard-nya.
+  > Alasan tertulis kedua pengecualian itu bahkan menyatakan, tentang rute yang
+  > ada, bahwa "no route names a settings activity".
+  >
+  > Ini persis peringatan yang tertulis di header berkas scanner itu sendiri,
+  > dan ia tetap dipercaya. Draf 4 kini beku sebagai test bersama tiga draf
+  > sebelumnya: konstanta diselesaikan **file-first**
+  > (`resolveConstantsForSource`), tabel lintas-berkas hanya untuk nama yang
+  > tak diikat berkas itu — yakni persis himpunan yang cuma bisa datang lewat
+  > `import`. Nama yang diikat DUA KALI di dalam satu berkas tetap
+  > tak-terpecahkan; menebak di situ hanya menukar satu jawaban salah dengan
+  > lawannya. Mutation-proven di dua lapis: helper DAN
+  > `evaluateEnforcementCoverage`, karena helper yang benar dengan satu-satunya
+  > pemanggilnya masih meneruskan tabel datar akan **tampak** diperbaiki.
+  >
+  > Pelajaran yang lebih umum, dan ini yang ketiga kalinya di repo ini: sebuah
+  > gate yang menjawab "tak tergerbangi" untuk yang tergerbangi tidak berhenti
+  > pada satu laporan salah — ia **melahirkan dokumen**. Kedua entri itu ditulis
+  > sebagai KEPUTUSAN ber-alasan, bukan sebagai temuan yang menunggu verifikasi.
+
+  > **Gate-nya sendiri butuh tiga kali tulis ulang, dan itu pelajarannya.**
+  > Draf 1 hanya membaca literal string → **39 false positive**, termasuk tiga
+  > permission yang endpoint-nya mendarat minggu itu juga (banyak modul menulis
+  > `moduleKey: THEMING_MODULE_KEY`). Draf 2 mencocokkan kurung terdalam →
+  > setiap guard ber-field bersarang tak terlihat (`workflow.approval.approve`).
+  > Draf 3 menuntut action literal → dua guard kondisional
+  > (`comments.moderation.approve`/`.reject`) terlewat. Scanner yang menjawab
+  > "tak tergerbangi" untuk yang tergerbangi LEBIH buruk daripada tak ada
+  > scanner: ia melatih pembacanya menambah pengecualian sampai gate-nya tak
+  > menanyakan apa pun. Ketiga draf itu dibekukan sebagai test di
+  > `tests/permission-enforcement-coverage.test.ts`.
+
+  Tiga saudara `blog_content` sisanya (taxonomy, presentation, settings/homepage)
+  permukaannya lengkap — dan itu kini klaim yang **dijaga**, bukan hasil audit
+  manual sekali jalan.
+
+  - ~~`idn-admin-regions`~~ **SUDAH PUNYA LAYAR** — `/admin/idn-regions`, mendarat
+    di #332. Entri ini sebelumnya berbunyi "sengaja tanpa layar"; itu **usang**,
+    dan sempat diulang dalam badan PR #345 ("satu-satunya modul tanpa layar").
+    Diverifikasi ke kode: `grep -L 'navigation:' src/modules/*/module.ts` kini
+    mengembalikan **nol** baris. ADR-0052 memindahkan LIFECYCLE dataset-nya ke
+    job operator — bukan seluruh modulnya — dan dua permission baca yang tersisa
+    justru digerakkan layar itu.
+
+  Ikuti pola gelombang #321–#330 di §3 — termasuk contract test per layar, yang
+  **mutation-proven** (kembalikan cacat aslinya dan pastikan MERAH) sebelum di-commit.
+
+  **Dua pelajaran baru dari gelombang kedua, keduanya berlaku untuk layar berikutnya:**
+  - **README modul bisa mengklaim layar yang tak pernah ada.** `reporting/README.md`
+    memerikan `/admin/reporting/projections` + helper `submitJson`, dan
+    `workflow-approval/README.md` memerikan `/admin/workflows` —
+    tak satu pun pernah ada di repo ini; teksnya ikut terbawa saat port. Karena kedua
+    modul tak mendeklarasikan `navigation`, gerbang `admin-navigation-registry.test.ts`
+    yang menangkap path menggantung **tak punya apa pun untuk diperiksa**. Docs tidak
+    digerbangi sebagaimana descriptor digerbangi — jadi baca README modul sebagai
+    klaim yang harus diverifikasi ke `ls src/pages/admin/`, persis seperti
+    [[awcms-stale-skill-flips-direction]] untuk skill.
+  - **Nilai `Idempotency-Key` bukan seragam per repo, melainkan per endpoint, dan
+    layar harus meniru pembagiannya persis.** Tiga bentuk sudah muncul:
+    `/admin/reporting` (lima wajib, `reconcile` tanpa — ia hanya meng-append snapshot),
+    `/admin/domain-events` (tiga arah: `replay` wajib karena tiap panggilan kerja BARU,
+    `pause`/`resume` tidak karena transisi status), dan `/admin/sync` (NOL — ketiga
+    mutasinya transisi status yang idempoten alami). Contract test harus mengikat
+    pembagian itu **per-request** (potong string dari URL-nya), bukan sebagai hitungan
+    header global, dan sekalian menegaskan endpoint-nya masih setuju.
 
 - **Kontrak yang menahan `awcms-astro` — SELESAI (2026-08-01, ADR-0049, `sql/082`/`083`).**
   Kredensial mesin baca-saja + `GET /api/v1/auth/session`. Kredensial
@@ -260,7 +757,22 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
     sesinya kedaluwarsa.
   - **[ADR-0050](adr/0050-bff-session-handoff-code.md)** — BFF memperoleh sesi manusia lewat
     kode handoff sekali-pakai; proksi password ditolak karena login di sini bukan satu
-    langkah (MFA/OIDC/Turnstile harus disalin ke repo kedua). **Dokumen, belum kode.**
+    langkah (MFA/OIDC/Turnstile harus disalin ke repo kedua). **SISI `awcms` SELESAI
+    (#347)** — `sql/088` (`awcms_bff_clients` + `awcms_session_handoff_codes`),
+    `POST /api/v1/auth/session-handoff/issue` (self-service: identitas dari SESI, tak
+    pernah dari body) dan `.../redeem` (klien terdaftar, server-ke-server, satu-satunya
+    endpoint di repo ini yang diautentikasi client secret). Kode ≤60 detik, sekali pakai
+    lewat `UPDATE … WHERE redeemed_at IS NULL`, allow-list `redirect_uri` cocok-persis,
+    dan barisnya menyimpan `identity_id` + assurance — bukan token — sehingga tak ada
+    kredensial hidup tersimpan dan login `aal1` tak bisa dicuci jadi sesi `aal2`.
+    Yang tersisa milik `awcms-astro`: `/internal/login`, sesi BFF server-side, cookie
+    portal, CSRF.
+
+    > **Jebakan yang ditemukan integration test, bukan pembacaan.** `created_at` DEFAULT
+    > `now()` adalah instant MULAI TRANSAKSI, sementara `expires_at` diturunkan dari jam
+    > aplikasi — dua jam berbeda, jadi CHECK `expires_at <= created_at + 60 detik`
+    > menolak kode normal begitu transaksi terbuka sesaat. Aplikasi kini menulis
+    > keduanya dari satu jam.
 - **Katalog tag OpenAPI & kepemilikan fragment — SELESAI (2026-07-30).** Temuan graphify
   2026-07-29 ternyata **lebih luas dari yang dilaporkan**: bukan hanya `blog_content` yang
   hilang dari `docs/awcms/api-reference.md`, melainkan **55 operasi dari empat modul** —
@@ -297,7 +809,12 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
   masih butuh ADR admission. Dua keputusan yang mengikat implementasi: **merchant =
   business scope** (mengisi resolver NO-OP fail-closed, bukan menambah atribut ABAC baru)
   dan **browser tidak pernah memanggil `awcms` langsung** (BFF di `awcms-astro`).
-- **Serap tulang punggung awcms-mini → awcms (fondasi bisnis + SaaS control plane).**
+- **~~Serap tulang punggung awcms-mini~~ — DICABUT sebagai jalur (ADR-0055).** Yang di
+  bawah ini kini **daftar KEBUTUHAN, bukan daftar port**: setiap kemampuan dinilai ulang
+  dan **dibangun di sini** dengan ADR admission-nya sendiri. Bahwa `awcms-mini` kebetulan
+  sudah punya implementasinya bukan lagi alasan untuk membangunnya — dan bukan pula
+  desainnya. Konteks lama dipertahankan di bawah.
+- **(historis) Serap tulang punggung awcms-mini → awcms (fondasi bisnis + SaaS control plane).**
   Peta eksekusi di
   [`awcms/absorb-awcms-mini-backbone-roadmap.md`](awcms/absorb-awcms-mini-backbone-roadmap.md).
   **Temuan audit 2026-07-25:** lima modul sudah di-`Accepted` oleh ADR di repo ini tetapi
@@ -327,7 +844,9 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
   `awcms.ahlikoding.com`, staging `awcms-staging.ahlikoding.com`, dan
   development lokal kini identik: migrasi **70**, 118 tabel, 197 permission, RLS
   `ENABLE`+`FORCE` 109/118, runtime sebagai `awcms_app` (bukan superuser), owner
-  `admin@ahlikoding.com` dengan role `owner` 197/197, dan
+  `admin@ahlikoding.com` dengan role `owner` 197/197 (angka-angka itu potret saat
+  fase disetarakan; per 5 Agustus 2026 repo memuat **90** migrasi dan **203**
+  permission — verifikasi dengan `ls sql/` dan katalog, jangan kutip dari sini), dan
   `PUBLIC_DEFAULT_TENANT_*` di-pin per fase. Isolasi dibuktikan sebagai
   `awcms_app` (`0 / 1 / 0`), bukan diasumsikan. Suite DB-gated jalan di dev
   (harness 142 + legacy 64, nol gagal). Detail dan jebakannya di
@@ -339,9 +858,53 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
   `bun run edge-cache:purge`, gate `bun run edge-cache:surfaces:check`.
   **SUDAH sejak #246:** emisi purge dari `theming` (publish/rollback/retire, satu
   transaksi dengan perubahannya) dan gate kepemilikan — tiap modul yang memiliki
-  surface ter-deklarasi WAJIB punya call-site purge. **BELUM:** surface discovery
-  ber-resolusi-host (`serveDiscovery` tak menerima `locals`). Rinci di
+  surface ter-deklarasi WAJIB punya call-site purge. Rinci di
   [`awcms/edge-cache-architecture.md`](awcms/edge-cache-architecture.md).
+
+  **Permukaan host-resolved boleh di-cache ([ADR-0061](adr/0061-host-resolved-public-surfaces-are-edge-cacheable.md)).**
+  Yang ditemukan saat mengerjakannya lebih besar dari "satu keluarga rute belum
+  di-cache": **sumber tenant nomor satu ADR-0042 §8 tidak pernah punya penulis.**
+  `locals.edgeCacheTenantId` dideklarasikan di `src/env.d.ts`, dibaca
+  `src/middleware.ts`, didahulukan `resolveEdgeCacheTenantId` — dan nol rute
+  pernah meng-assign-nya, jadi cabang itu tak bisa dieksekusi sejak ADR-0042
+  mendarat. Akibatnya persis terbalik dari arah ADR-0059: cache tepi mempercepat
+  `/blog/{tenantCode}/**` (bentuk warisan) dan **tidak menyentuh** satu pun
+  permukaan host-resolved.
+
+  **SELESAI SELURUHNYA.** §A — keluarga `/news/**` (3 entri, dimiliki
+  `blog_content`). §B — enam rute discovery root (`seo-robots`/`seo-sitemap`/
+  `seo-feed`); `serveDiscovery` menerima `locals` dan mempublikasikan setelah
+  `build(ctx)` memberi payload, sehingga `/sitemap-99999.xml` cocok pola tapi tak
+  pernah menerbitkan tenant — menyusuri nomor halaman tak bisa mengisi cache.
+
+  **Temuan §B yang berlaku untuk setiap surface agregat berikutnya: badan
+  discovery punya DUA penulis.** Konfigurasinya milik `seo_distribution`
+  (`PUT /api/v1/seo/config` kini mem-purge), tetapi ISI-nya diagregasi dari setiap
+  penyedia `seo_facts` — menerbitkan post mengubah `/sitemap.xml` tanpa menyentuh
+  satu baris pun milik `seo_distribution`, dan purge modul menandai
+  `t:<tenant>:m:<moduleKey>` sehingga purge `blog_content` tak menjangkaunya.
+  Tanpa perbaikan: `/blog/{code}/feed.xml` ter-purge saat publish sementara
+  `/feed.xml` — konten sama, ejaan host-resolved — basi sampai TTL, tanpa satu
+  pun laporan. `enqueueModuleContentPurge` kini juga mem-purge modul yang
+  `consumes` modul yang berubah DAN memiliki surface: dibaca dari REGISTRY (jadi
+  `blog_content` tak pernah menyebut `seo_distribution`) dan dibatasi ke pemilik
+  surface (ban untuk key yang tak menandai objek apa pun = upacara yang terlihat
+  seperti cakupan, aturan yang sama yang sudah dipakai untuk `media_library`).
+
+  > **Dua jebakan yang tak terbaca dari kode, keduanya kini ditegakkan test.**
+  > (1) Prasyarat "VCL mem-hash `Host`" itu **dua** properti: `hash_data(req.http.host)`
+  > ADA, tetapi sub itu juga harus TIDAK `return (lookup)` — sub kustom yang
+  > `return` mengakhiri rantai sehingga `vcl_hash` milik `builtin.vcl` (yang
+  > mem-hash `req.url`) tak pernah jalan, dan seluruh path pada satu host runtuh
+  > ke SATU entri cache. Menambahkan baris itu terbaca seperti melengkapi
+  > subroutine. (2) **Kapan** rute mempublikasikan tenant adalah pertanyaan
+  > disclosure, bukan gaya: 404 boleh di-cache, jadi publikasi sebelum cabang
+  > "post/term tidak ada" membuat 404 resource-hilang ber-`Surrogate-Control`
+  > sementara 404 host-tak-dikenal ber-`private, no-store` — menjawab "apakah
+  > hostname ini memetakan ke tenant hidup?" dari SATU permintaan, lewat kanal
+  > kedua atas pertanyaan yang `padUnresolvedHostRouteLatency` justru dibangun
+  > untuk menutup. Satu baris beberapa baris terlalu tinggi; tetap meng-compile,
+  > tetap menyajikan HTML benar, lolos setiap test fungsional.
   - **Wave 2 — INTI SELESAI:** delta auth/admin. **SUDAH:** penataan sidebar per-tenant
     (#272, `sql/071`–`072`); **password reset lewat email** (`sql/073`) — dua endpoint publik
     enumeration-safe + `/forgot-password`/`/reset-password`, single-use ditegakkan dengan row
@@ -358,26 +921,126 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
   - Sebelum tiap port berikutnya: **cek inversi-vs-net-baru** (mis. media sudah jadi satu modul
     pemilik — konsumen wajib lewat port `media_library`, jangan buat tabel media baru).
     (`blog-content` SUDAH di-port — PR #214; `news-portal` dilebur ke dalamnya, ADR-0044.)
-- **Rute publik host-resolved**: `tenant-domain` sudah mendarat; adopsi rute `/news/**` +
-  rute konten host-based `/blog/{slug}` (agar `<loc>` sitemap SEO resolve tanpa tenantCode)
-  masih follow-up (lihat README `seo-distribution` §follow-up).
-- **Port generator `repo:inventory`** dari mini agar `repo-inventory.md` jadi ter-generate.
-- **Seam yang menunggu penyedia**: business-scope resolver base masih NO-OP fail-closed;
-  SoD base kini ship **1 rule** (`data_lifecycle.legal_hold_maker_checker`, ADR-0037) — bukan
-  lagi 0 (rule ilustratif tambahan tetap di fixture).
+
+- **Rute publik host-resolved — SELESAI ([ADR-0059](adr/0059-host-resolved-public-content-routes.md)).**
+  Keluarga `/news/**` (indeks, detail post, kategori, tag) kini ada:
+  tanpa segmen `tenantCode`, tenant diresolusi dari request lewat
+  `withHostResolvedBlogTenant` (sebentuk `site_search`/`comments`, ber-padding
+  latensi), digerbangi saklar per-tenant `publicRouteMode` yang simetris dengan
+  `legacyTenantRouteEnabled`. **Nol migrasi, nol permission, nol perubahan
+  OpenAPI.** `/news/feed.xml`/`sitemap-news.xml`/`search` sengaja TIDAK dibangun
+  — root host sudah melayani ketiganya host-resolved.
+
+  Yang paling penting untuk dibawa ke pekerjaan berikutnya, dan itu bukan
+  fiturnya:
+
+  > **Cacat yang dicatat entri sebelumnya di sini TIDAK ADA.** Entri itu
+  > berbunyi "untuk tenant host-resolved, **setiap URL di sitemap dan feed
+  > menunjuk halaman yang 404**" karena `createBlogContentSeoFactsAdapter`
+  > memakai default `/blog`. Diverifikasi ke kode: rute discovery tidak pernah
+  > memakai default itu — `discovery-providers.ts` memanggilnya dengan
+  > `` `/blog/${tenantCode}` `` **sejak modulnya mendarat** (`git log -S`,
+  > #223), docblock-nya bahkan menuliskan alasannya, dan singleton ber-default
+  > `/blog` itu **nol pemanggil di `src/`**. Enam rute discovery lewat satu
+  > choke point, jadi tak ada jalur kedua. Ini pengulangan ADR-0058 §1: sebuah
+  > dugaan yang ditulis sebagai temuan, lalu tersalin ke dokumen ini sebagai
+  > keputusan. Yang benar-benar hilang adalah **keluarga rutenya**, bukan
+  > kebenaran URL-nya.
+
+  Gantinya, invarian yang sekarang dijaga: **jangan pernah mengiklankan URL
+  yang tak kita layani.** `resolveEnabledSeoProviders` kini MEMILIH base path
+  dari keluarga yang benar-benar melayani, dan bila tenant mematikan KEDUA
+  keluarga ia menyumbang **nol provider** — sitemap kosong, bukan sitemap
+  berisi 404. Mutation-proven (kembalikan base path ke konstanta lama → dua
+  test integrasi merah).
+
+  Dan satu bukti yang menutup permintaan backlog aslinya: `/blog/{slug}`
+  **tak bisa** jadi bentuknya. Diprobe langsung — Astro memperingatkan rute itu
+  "is defined in both" berkas dengan `/blog/[tenantCode]/index.ts` dan **build
+  tetap sukses**, satu menaungi yang lain diam-diam, dengan catatan "a
+  collision will result in a hard error in following versions of Astro".
+
+- **Kesiapan `ahliweb/awcms-astro` — dianalisis 3 Agustus 2026, dan hasilnya
+  membalik asumsi yang wajar.** ADR-0021 di repo itu **menahan** seluruh
+  pengembangannya sampai "fondasi `awcms` selesai", dengan dua indikator:
+  (1) tiap modul punya layar — **SUDAH nol pengecualian**; (2) §4 dokumen ini
+  habis — belum.
+
+  Yang diverifikasi ke kode, bukan ke daftarnya: **seluruh kontrak konten dan
+  sesi yang benar-benar dipanggil `awcms-astro` sudah lengkap.** Repo itu hanya
+  menyentuh lima permukaan — `/api/v1/blog/posts` (traversal `view=full` +
+  cursor + `?locale=`), `/api/v1/media/objects`, `/api/v1/auth/session`,
+  `/api/v1/access/machine-credentials`, dan `/api/v1/blog/posts/{id}` — dan
+  kelimanya mendarat (#317/#318/#346, ADR-0049/0050).
+
+  Satu gap nyata ditemukan dan **sudah ditutup** (#370): `publicUrl` media
+  dibangun dari `NEWS_MEDIA_R2_PUBLIC_BASE_URL`, env sisi server, sehingga
+  klien build tak punya cara menemukan origin media — padahal CSP-nya wajib
+  menyebutnya di `img-src` **saat build**, sebelum satu objek pun ditarik.
+  Satu-satunya alternatif adalah menyalin env var itu dengan tangan; bentuk
+  yang sama dengan `MAX_REASON_LENGTH` di lima berkas, dengan kegagalan
+  (gambar diblokir diam-diam) yang tak menyebut sebabnya.
+  `GET /api/v1/media/public-origin` menutupnya.
+
+  **Yang tersisa dan BUKAN milik repo ini:** resolusi gambar artikel, kartu
+  share, dan pilihan `img-src` semuanya keputusan sisi `awcms-astro`. Yang
+  tersisa DAN milik repo ini: **nol**. Rute konten host-based mendarat lewat
+  ADR-0059, dan business-scope resolver — yang diperlukan BFF portal Jualanku,
+  bukan situs statisnya — lewat ADR-0060. Bentuk scope merchant Jualanku sendiri
+  tetap butuh ADR admission-nya sendiri, tapi fondasinya tak lagi menolak
+  segalanya.
+  `newsletter`/`social-publishing`/pustaka `src/components/ui/` tetap belum
+  ada (21 modul, `src/components/ui` tidak ada), tapi tak satu pun memblokir
+  `awcms-astro`.
+
+- **~~Port generator `repo:inventory`~~ — SELESAI, dan dibangun di sini (bukan
+  port).** `bun run repo:inventory:generate|:check` (`scripts/repo-inventory.ts`)
+  mengisi blok ber-penanda di [`awcms/repo-inventory.md`](awcms/repo-inventory.md)
+  dari registry modul, `sql/`, `tests/`, `src/pages/`, dan `docs/adr/`;
+  `:check` masuk rantai `bun run check`. Dokumen itu sebelumnya membawa banner
+  "GENERATED FILE" tanpa generator, dan isinya menua ke arah paling merugikan:
+  "belum ada tabel"/"belum ada test file" terhadap 126 tabel dan 296 berkas
+  test, jumlah migrasi **45** di satu paragraf dan **89** di paragraf lain,
+  serta **20** modul saat registry memuat 21. Status RLS diparse dari teks
+  migrasi secara **kumulatif** (sql/020 mematikan FORCE untuk perbaikan data
+  lalu menyalakannya lagi — pembaca statement pertama ATAU terakhir saja akan
+  melaporkan kebalikan dari kebenaran); `security:readiness` tetap otoritas
+  untuk deployment nyata. Satu test lintas-artefak menjaga klaimnya: himpunan
+  tabel RLS-free yang diturunkan generator wajib SAMA dengan kunci
+  `GLOBAL_TABLE_FORBIDDEN_PRIVILEGES` — satu sisi diturunkan dari migrasi, satu
+  sisi dideklarasikan manusia dengan alasan per entri.
+- **~~Seam yang menunggu penyedia~~ — business-scope resolver SUDAH PUNYA PENYEDIA
+  ([ADR-0060](adr/0060-business-scope-hierarchy-provided-by-tenant-admin.md)).**
+  `tenant_admin` me-resolve scope type `office` terhadap `awcms_offices`; NO-OP
+  lama dihapus. Yang ditemukan saat mengerjakannya lebih besar dari "seam kosong":
+  `POST /api/v1/identity/business-scope/assignments` — ter-guard, ter-audit,
+  ber-RLS, dievaluasi SoD — **menolak SETIAP input di SETIAP deployment**, karena
+  composition root-nya menyuntikkan NO-OP dan scope type cadangan `tenant`
+  ditolak validator sebagai tak-bisa-di-assign (#180 F2). Seluruh subsistem di
+  belakangnya ikut mati: nol baris untuk `businessScopeFacts`, nol untuk job
+  expiry, nol scope untuk SoD `same_scope_only`. NO-OP itu benar saat ditulis
+  (menunggu aplikasi turunan) lalu ADR-0034 menghapus jalur itu — dan
+  `providedBy`-nya menamai `organization_structure`, modul yang ADR-0016
+  `Accepted` tanpa satu baris kode. Hanya baris HIDUP yang resolve, tiap batas
+  (siklus/kedalaman/jumlah) MENOLAK alih-alih memotong, plus pengerasan jalur
+  baca: sentinel `tenant` hanya dipercaya bila menamai tenant itu sendiri.
+  Mutation-proven terhadap Postgres nyata. Nol migrasi.
+  SoD base tetap ship **1 rule** (`data_lifecycle.legal_hold_maker_checker`,
+  ADR-0037) — rule ilustratif tambahan tetap di fixture.
 
 ## 5. Kontrak alur kerja (ringkas)
 
-1. **Mini-first DITANGGUHKAN** ([ADR-0047](adr/0047-mini-micro-frozen-foundation-built-here.md),
-   31 Juli 2026): `awcms-mini`/`awcms-micro` beku, jadi fitur fondasi **dirintis langsung
-   di sini**. Port _keluar_ dari kedua repo itu tetap boleh dan tetap memakai langkah
-   rename `awcms_mini_`/`awcms_micro_` → `awcms_` di
+1. **Mini-first DICABUT** ([ADR-0055](adr/0055-development-confined-to-awcms-and-awcms-astro.md),
+   2 Agustus 2026, men-supersede ADR-0047): pengembangan hanya di `ahliweb/awcms` +
+   `ahliweb/awcms-astro`. `awcms-mini`/`awcms-micro` adalah **arsip** — boleh dibaca
+   sebagai sejarah, tetapi **tidak ada pekerjaan yang dijadwalkan "di-port dari" sana**;
+   kemampuan yang diinginkan **dibangun di sini** dengan ADR admission sendiri.
    [`awcms/alur-pengembangan-mini-first.md`](awcms/alur-pengembangan-mini-first.md)
-   (dokumen itu kembali berlaku utuh begitu pembekuan dicabut). Fitur fondasi yang
-   mendarat selama pembekuan: **ADR wajib**, security review tambahan untuk
-   `auth`/`access`/`sync`, dan **entri divergence di
-   [`awcms-family-compatibility.yaml`](../awcms-family-compatibility.yaml) saat ia
-   mendarat** — bukan retroaktif.
+   dipertahankan sebagai catatan sejarah. Penjagaannya TETAP: **ADR wajib** untuk
+   perubahan standar, security review tambahan untuk `auth`/`access`/`sync`,
+   `bun run check` penuh, OpenAPI/AsyncAPI sinkron, RLS `FORCE`, ABAC default-deny.
+   Kewajiban entri divergence di `awcms-family-compatibility.yaml` **dicabut** — ADR-nya
+   sendiri yang menjadi catatan.
 2. **Branch dulu** (jangan commit ke `main`); satu PR = satu perubahan atomic.
 3. **`bun run check` PENUH** sebelum PR (lint + docs + kontrak + typecheck + test + build;
    `bun run format` dulu bila perlu). Changeset wajib untuk perubahan perilaku.
@@ -415,10 +1078,25 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
   `src/`/`scripts/`**. Sebelumnya hanya lima markdown akar, sehingga enam komentar di
   `src/modules/module-management/` bisa menyuruh pembacanya menjalankan target
   `modules:sync` yang tak pernah ada (mekanisme sesungguhnya `POST /api/v1/modules/sync`)
-  dengan `bun run check` tetap hijau. `docs/awcms/` + `.claude/skills/` tetap DI LUAR
-  gerbang: isinya target adaptasi awcms-mini yang memang boleh menyebut tooling belum-ada
-  (`production:preflight`, `repo:inventory:*`, `performance:*`, dst. — daftar lengkapnya
-  di [`../scripts/README.md`](../scripts/README.md) §Ditunda).
+  dengan `bun run check` tetap hijau. `docs/awcms/` tetap DI LUAR gerbang itu:
+  isinya campuran sejarah + spesifikasi yang memang boleh menyebut tooling belum-ada
+  (`production:preflight`, `performance:*`, dst. — daftar lengkapnya di
+  [`../scripts/README.md`](../scripts/README.md) §Ditunda).
+- **`.claude/skills/` KINI DIGERBANGI** ([ADR-0062](adr/0062-skills-are-gated-against-the-code-they-describe.md),
+  `bun run skills:check`) — pengecualian lamanya dicabut karena ADR-0055 mencabut
+  alasannya. Yang memaksanya: **sebelas ADR berurutan (0051–0061) mendarat tanpa SATU pun
+  skill menyebutnya**, empat skill modul HIDUP menunjuk `src/lib/<modul>/…` untuk berkas
+  yang sudah pindah ke `src/modules/<modul>/presentation/…`, dan beberapa mengumumkan layar
+  admin "TIDAK di-port" berbulan-bulan setelah layarnya mendarat. **Skill DIIKUTI, dokumen
+  dibaca** — dan arah menuanya terbalik: "modul ini belum ada di sini" mulai benar lalu
+  menua jadi kebohongan percaya diri yang menyuruh agen membangun ulang hal yang sudah ada.
+  Tiga aturannya bertumpu pada registry modul, bukan prosa: skill modul hidup wajib menunjuk
+  path nyata (tanpa pengecualian), tiap `ADR-NNNN` wajib punya berkas, dan skill untuk kode
+  yang TIDAK ada wajib terdaftar di `ASPIRATIONAL_SKILLS` dengan alasannya. Entri yang MATI
+  (modulnya dibangun → aturan 1 mengambil alih) ikut dilaporkan — tiga entri sudah mati saat
+  ditulis. **Efek samping yang perlu diketahui:** badan banyak skill memuat spesifikasi
+  awcms-mini apa adanya, jadi path milik repo sumber kini harus ditulis `awcms-mini:src/…`,
+  bukan `src/…`.
 - **Kurung tak-terkutip mematikan SELURUH diagram mermaid** di GitHub (bukan sebagian):
   di `flowchart`/`graph`, `(` adalah token pembuka bentuk node, jadi
   `-->|online (primary)|` atau `{... (x)?}` gagal parse dan diganti kotak "Unable to
@@ -435,6 +1113,40 @@ dirintis langsung di sini setelah pembekuan ADR-0047.)
   picu ulang dengan empty commit; flake Postgres CI → `gh run rerun --failed`.
 - **Subagent di working tree bersama** bisa memindahkan HEAD → verifikasi
   `git branch --show-current` sebelum commit.
+- **`.astro` adalah titik buta SETIAP gerbang berbasis tipe.** `bun run typecheck`
+  adalah `tsc --noEmit`, dan `tsc` tidak bisa mengurai `.astro` — ia melewatinya
+  **diam-diam**, meskipun `tsconfig.json` menulis `"include": ["src/**/*"]`.
+  `astro build` juga tidak memeriksa tipe. Jadi 42 berkas / 22.328 baris (seluruh
+  layar admin + login + halaman publik) menulis TypeScript yang tak pernah
+  diperiksa siapa pun. Kelas yang paling mungkin lolos: `withTenant`
+  (mengembalikan `T | Response`) dipakai di tempat `withTenantOrThrow`
+  (melempar) yang benar — halaman tetap ter-compile dan merender data yang
+  sebetulnya sebuah `Response`. Sampai `astro check` masuk rantai, **baca ulang
+  tipe di `.astro` dengan mata**, jangan percaya CI hijau. Status 5 Agustus 2026:
+  memasukkan `astro check` **TERBLOKIR eksternal** — `@astrojs/check` menuntut
+  API TypeScript 6.x sedangkan repo di 7.0.2; keadaan ini tercatat sebagai
+  divergence ADR-0068 §C (`awcms-family-compatibility.yaml`, reviewDate
+  2027-02-04), jadi jebakan ini tetap berlaku penuh.
+- **Repo ini tidak mengompresi apa pun — dan kompresi yang pembaca terima
+  diwarisi dari lapisan yang tak diperiksa gerbang mana pun.**
+  `edge-cache/response-headers.ts` memancarkan `Vary: Accept-Encoding` pada
+  respons yang bisa di-cache, tetapi tak ada kompresi di aplikasi, tak ada
+  `beresp.do_gzip` di `infra/varnish/default.vcl`, dan tak ada middleware
+  `compress` Traefik yang dideklarasikan di repo; Varnish **tidak** mengompresi
+  atas inisiatifnya sendiri. Pembaca produksi/staging TETAP menerima gzip —
+  dari Cloudflare, karena kedua host proxied (`Cloudflare (proxied) → Traefik
+:443 → varnish:80 → app`, [`awcms/environments.md`](awcms/environments.md)
+  §Cache tepi). Konsekuensinya: deployment template ini di luar CDN pengompresi
+  tidak mendapat kompresi sama sekali. Sejak 5 Agustus 2026 ketergantungan itu
+  **dinyatakan, bukan disembunyikan** (celah C3 DITUTUP):
+  `bun run security:readiness` memuat `checkResponseCompressionOwnership`, yang
+  memindai lima lapisan yang repo ini kirim dan — karena tak satu pun
+  mengompresi — menuntut blok bertanda `kompresi-tepi` di `environments.md`
+  menyebut tier pengompresinya. Batasnya tetap harus dibaca: yang digerbangi
+  adalah **deklarasinya**, bukan lapisan luarnya. Tidak ada gerbang di repo ini
+  yang akan merah bila Cloudflare berhenti mengompresi atau dilepas dari depan
+  Traefik — itu hanya terlihat dengan memeriksa `content-encoding` di tepi
+  environment yang sebenarnya.
 
 Detail lebih dalam ada di skill terkait (`awcms-new-migration`, `awcms-abac-guard`,
 `awcms-testing`, `awcms-sync-hmac`, dst.) dan di ADR.
@@ -443,7 +1155,10 @@ Detail lebih dalam ada di skill terkait (`awcms-new-migration`, `awcms-abac-guar
 
 - Mulai unit kerja: skill `awcms-implement-issue` (orkestrator) → `awcms-new-module` /
   `awcms-new-migration` / `awcms-new-endpoint` / `awcms-new-event`.
-- Port dari mini: skill `awcms-port-from-mini`.
+- Kapabilitas dari arsip mini/micro: **bukan port** — [ADR-0055](adr/0055-development-confined-to-awcms-and-awcms-astro.md)
+  menjadikan mini/micro arsip; kapabilitas baru masuk lewat **ADR admission dan
+  dibangun di repo ini**. Skill `awcms-port-from-mini` HISTORIS (catatan cara
+  port dulu dikerjakan; §Adaptasi-nya masih berguna saat membaca kode arsip).
 - Review/keamanan: skill `awcms-pr-review`, `awcms-security-review`, subagent
   `awcms-reviewer` / `awcms-security-auditor`.
 - Perbarui **dokumen ini** setiap ada perubahan state besar (modul/migrasi baru, keputusan

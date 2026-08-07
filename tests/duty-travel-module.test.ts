@@ -4,8 +4,8 @@ import { listModules } from "../src/modules";
 import { dutyTravelModule } from "../src/modules/duty-travel/module";
 import { DUTY_TRAVEL_PERMISSIONS } from "../src/modules/duty-travel/domain/duty-travel-permissions";
 
-const PERMISSION_SEED_PATH = "sql/085_awcms_duty_travel_permissions.sql";
-const SCHEMA_PATH = "sql/084_awcms_duty_travel_schema.sql";
+const PERMISSION_SEED_PATH = "sql/092_awcms_duty_travel_permissions.sql";
+const SCHEMA_PATH = "sql/091_awcms_duty_travel_schema.sql";
 
 async function readRepoFile(path: string): Promise<string> {
   return Bun.file(path).text();

@@ -32,6 +32,27 @@ import { recordAuditEvent } from "../../../../../../modules/logging/application/
  * The single-active rule itself is a partial unique index in the database, not a
  * check here — two concurrent activations end with one committed and one
  * rejected, never with two active datasets.
+ *
+ * ## Why this path exists again (ADR-0053)
+ *
+ * It shipped, was REMOVED by ADR-0052, and is back — deliberately, and only
+ * because what was missing has since been built. The permission it enforces
+ * (`idn_admin_regions.dataset.configure`) is now `scope: "platform"`: excluded
+ * from the blanket grant every new tenant's owner receives, and refused by the
+ * chokepoint unless the acting tenant IS the platform tenant. ADR-0052 removed
+ * the surface rather than guard it precisely because that gate did not exist;
+ * ADR-0052 §Konsekuensi named its return as the condition for building it.
+ *
+ * The audit objection ADR-0052 raised is answered by the same change, not
+ * waived: `recordAuditEvent` is tenant-scoped, which used to mean the row
+ * landed in whichever tenant's log happened to press the button. It can now
+ * only ever land in the PLATFORM tenant's log, which is where a platform
+ * action belongs.
+ *
+ * `bun run idn-regions:activate` stays. A browser is not the only place this
+ * should be doable — CI, a recovery shell with no working UI, and an operator
+ * runbook all need it — and the job path is what covers a deployment whose
+ * platform tenant cannot log in.
  */
 const IDEMPOTENCY_SCOPE = "idn_regions_dataset_activate";
 

@@ -6,7 +6,13 @@
 # (`bun run idn-regions:import`) reading a repo-vendored dump, not an HTTP
 # operation — same administrative-operation posture as data_lifecycle's real
 # archive/purge. What IS here: the read-only lookup, the dataset/provenance
-# listing, and the two audited lifecycle actions (activate, rollback).
+# listing, and the two audited lifecycle actions (activate, rollback). Those two
+# are PLATFORM-scoped (ADR-0053): they change the dataset served to every tenant,
+# so the permissions behind them are excluded from the catalogue a tenant owner
+# receives and the chokepoint refuses them unless the caller IS the platform
+# tenant. ADR-0052 had removed them entirely, because that gate did not exist
+# yet; the operator jobs it introduced (`bun run idn-regions:activate` /
+# `:rollback`) remain, for CI and for recovery without a browser.
 #
 # NOT independently valid OpenAPI — $ref targets pointing at shared components
 # only resolve after `bun run openapi:bundle` merges this file with the root and

@@ -101,7 +101,7 @@ Sampai Issue #179, `evaluateAccess` tidak pernah membaca baris `awcms_abac_polic
 
 Lapis authorization organisasi **generik** di atas tenant + role — membatasi akses berdasarkan hierarki organisasi (legal entity, branch, office, department, cost center, project) tanpa memasukkan entitas domain ERP nyata ke base. Diport dari awcms-mini (Issue #746), **dilucuti** dari segregation-of-duties (SoD, itu Issue #181). Detail penuh: [ADR-0030](../../../docs/adr/0030-business-scope-hierarchy-generic-authorization-layer.md).
 
-- **Referensi generik + capability port.** `scope_type`/`scope_id` adalah referensi generik (bukan FK ke tabel organisasi). Validitas/ancestry di-resolve lewat `BusinessScopeHierarchyPort` (`_shared/ports/business-scope-hierarchy-port.ts`, ADR-0011) yang disediakan sebuah **modul penyedia** capability tersebut. Base mengirim resolver **no-op** (`business-scope-hierarchy-port-adapter.ts`, `resolved: false` untuk semua scope type) — jadi di base-murni tanpa provider, create assignment selalu menolak `scope_unresolved` dan aksi high-risk bergerbang-scope selalu ditolak (fail-closed by design). `identity_access` mendeklarasikan `capabilities.consumes` `business_scope_hierarchy` (`optional: true`); fixture test-support `tests/fixtures/example-domain-modules/` mengirim resolver dummy untuk uji.
+- **Referensi generik + capability port.** `scope_type`/`scope_id` adalah referensi generik (bukan FK ke tabel organisasi). Validitas/ancestry di-resolve lewat `BusinessScopeHierarchyPort` (`_shared/ports/business-scope-hierarchy-port.ts`, ADR-0011) yang disediakan sebuah **modul penyedia** capability tersebut. Sejak [ADR-0060](../../../docs/adr/0060-business-scope-hierarchy-provided-by-tenant-admin.md) penyedianya adalah **`tenant_admin`** (`office-scope-hierarchy-port-adapter.ts`): scope type `office` di-resolve terhadap `awcms_offices` (hanya baris hidup — bukan soft-deleted, bukan `inactive` — milik tenant sendiri; berbatas kedalaman/jumlah dan aman-siklus), scope type lain tetap `resolved: false`. Sebelumnya base mengirim resolver **no-op** yang menunggu aplikasi turunan; ADR-0034 menghapus jalur itu, sehingga create assignment menolak `scope_unresolved` untuk SEMUA input di SEMUA deployment. Scope type tenant-wide (`tenant`) tak pernah menyentuh port: service me-resolve-nya intrinsik dan **mewajibkan `scope_id` = id tenant itu sendiri**. `identity_access` tetap mendeklarasikan `capabilities.consumes` `business_scope_hierarchy` (`optional: true` — tenant tanpa office tetap jalan, fail-closed); fixture `tests/fixtures/example-domain-modules/` mengirim resolver dummy untuk ancestry heterogen.
 - **Skema (`sql/027`, seed `sql/028`)** — dua tabel tenant-scoped RLS `FORCE`: `awcms_business_scope_assignments` (subject→scope, role opsional, effective dating, `is_temporary`, status active/expired/revoked, grantor/approver/revoker) + `awcms_business_scope_assignment_events` (lifecycle **append-only**). Setiap FK subject/role/actor adalah **FK komposit `(tenant_id, …)`** — RI check PostgreSQL melewati RLS (GHSA-r7cx-c4jh-cvvw/sql/020), jadi FK single-column bisa lintas-tenant walau FORCE aktif; komposit + RLS menutupnya (dibuktikan `tests/integration/business-scope.integration.test.ts` di bawah `awcms_app`).
 - **Integrasi `evaluateAccess`.** Parameter ke-4 opsional `businessScopeFacts` (backward-compatible — call site lama tak berubah). Request opt-in lewat `resourceAttributes.requiredScopeType`/`.requiredScopeId` (+ `requiredScopeRelations`, subset `exact`/`descendant`/`ancestor`, default `["exact"]`). Relasi didukung: **exact, descendant, ancestor, tenant-wide** (`scopeType === "tenant"`). Fakta subjek di-resolve dulu (`business-scope-facts.ts`) agar evaluator tetap murni. `authorizeInTransaction` menerima `options.hierarchyPort` opsional untuk me-resolve + thread fakta.
 - **Fail-closed.** Unknown scope type / unresolved / stale hierarchy → default-**DENY** untuk aksi high-risk. `resolved: false` ≠ "resolved dengan ancestor kosong": coverage descendant/ancestor hanya dari fakta `resolved`, dan exact-match aksi high-risk butuh `resolved: true` (predikat mutation-tested RED).
@@ -348,6 +348,73 @@ JS sebagai array Postgres: `${["a","b"]}` sampai ke server sebagai teks `a,b`
 (22P02 "malformed array literal"), dan bentuk satu elemen paling berbahaya
 karena tiba sebagai `a` yang terlihat seperti string biasa. Pakai
 `toPostgresTextArray(...)::text[]`.
+
+## Handoff sesi untuk BFF (ADR-0050)
+
+Skema: `sql/088` (`awcms_bff_clients` + `awcms_session_handoff_codes`).
+
+**Masalah yang ditutupnya.** ADR-0049 menyelesaikan setengah pertanyaan: BFF
+yang SUDAH memegang token sesi bisa menanyakan "sesi ini milik siapa". Yang
+belum terjawab adalah dari mana token itu datang. Cookie `awcms_session` milik
+origin `awcms`; browser di origin `awcms-astro` tidak akan pernah mengirimnya,
+dan tidak boleh — itu batas origin yang bekerja, bukan celah yang perlu
+ditambal.
+
+Jalan pintas yang jelas (form login di `awcms-astro` yang mem-proksi
+`POST /api/v1/auth/login`) ditolak dua kali: password melintasi repo yang bukan
+identity store, dan **login di sini bukan satu langkah** — ia bisa membalas
+`401 MFA_REQUIRED`, mengalihkan ke provider OIDC tenant, atau menuntut token
+Turnstile. Mem-proksinya berarti salinan kedua dari alur MFA, callback OIDC, dan
+widget Turnstile di repo kedua.
+
+**Bentuknya.** Dua endpoint, dua prinsipal berbeda:
+
+- `POST /api/v1/auth/session-handoff/issue` — **manusia yang sudah login**
+  meminta kode sekali-pakai (≤60 detik). Self-service, bukan ber-permission:
+  identitas dan assurance diambil dari SESI, tak pernah dari body, jadi pemanggil
+  hanya bisa mencetak kode untuk dirinya sendiri. Mengarang permission di sini
+  adalah jebakan latent-authz yang repo ini sudah kirim dua kali.
+- `POST /api/v1/auth/session-handoff/redeem` — **klien terdaftar**, server-ke-server,
+  dengan client secret. Satu-satunya endpoint di repo ini yang diautentikasi
+  begitu (`defineClientCredentialTenantRoute`): ia adalah permintaan yang
+  MEMPEROLEH sesi, jadi belum ada sesi untuk disodorkan. Bukan kredensial mesin
+  juga — itu baca-saja secara konstruksi, dan prinsipal baca-saja yang bisa
+  mencetak sesi manusia adalah jalur eskalasi.
+
+**Yang mengikat keamanannya.**
+
+- **Allow-list `redirect_uri` cocok-persis.** ADR-0050 menamai open-redirect di
+  sini sebagai cara desain ini gagal. Bukan prefix (`https://app.example.com`
+  ber-prefix-sama dengan `https://app.example.com.evil.test`), bukan pula
+  origin (penyerang yang bisa memilih path di origin yang diizinkan sudah
+  cukup). Query dan fragment DITOLAK, bukan dibuang.
+- **Kode tidak membawa token.** Barisnya menyimpan `identity_id` + assurance
+  yang login benar-benar CAPAI; redeem mencetak sesi baru lewat
+  `createSessionWithAssurance`. Tidak ada kredensial hidup tersimpan selain
+  hash satu-arah kodenya sendiri — dan assurance tak pernah naik, jadi login
+  `aal1` tak bisa dicuci jadi sesi `aal2`.
+- **Sekali pakai di bawah konkurensi.** Klaimnya `UPDATE … WHERE redeemed_at IS
+NULL RETURNING …`, primitif mutual-exclusion tabel ini. Versi
+  baca-lalu-tulis membiarkan dua redemption serentak dua-duanya berhasil —
+  dibuktikan MERAH di `tests/integration/session-handoff.integration.test.ts`.
+- **Baris terpakai DISIMPAN, tidak dihapus.** Replay dijawab dari bukti, bukan
+  dari ketiadaan bukti: baris yang dihapus dan kode yang tak pernah ada tak
+  bisa dibedakan.
+- **Satu jawaban untuk semua kegagalan** (`401 HANDOFF_REJECTED`), termasuk body
+  cacat. Bedanya dicatat di audit trail; memberikannya ke pemanggil memberi tahu
+  pemegang kode curian apakah kode itu pernah sah.
+- TTL ≤60 detik ditegakkan **CHECK database**, bukan hanya konstanta TypeScript.
+
+**Jebakan yang ditemukan saat membangunnya.** `created_at` DEFAULT `now()`
+adalah instant MULAI TRANSAKSI, sedangkan `expires_at` diturunkan dari jam
+aplikasi — dua jam berbeda, sehingga CHECK `expires_at <= created_at + 60 detik`
+menolak kode yang sepenuhnya normal begitu transaksi sudah terbuka sesaat.
+Aplikasi menulis KEDUANYA dari satu jam. Ditemukan oleh integration test, bukan
+oleh pembacaan.
+
+**Yang masih milik `awcms-astro`:** rute `/internal/login`, penyimpanan sesi BFF
+server-side, cookie portal, CSRF, dan pemanggilan introspeksi per permintaan.
+Sisi `awcms` sudah lengkap.
 
 ## Belum tersedia (Sprint 3+)
 

@@ -1,6 +1,6 @@
 {
   "name": "awcms",
-  "version": "6.4.0",
+  "version": "7.0.0",
   "private": true,
   "description": "AWCMS — basis/fondasi modular monolith untuk pengembangan ERP & solusi bisnis (Bun + Astro + PostgreSQL)",
   "license": "MIT",
@@ -33,7 +33,8 @@
   },
   "scripts": {
     "dev": "bun --bun astro dev",
-    "build": "bun --bun astro build",
+    "build": "bun --bun astro build && bun run build:asset-budget:check",
+    "build:asset-budget:check": "bun scripts/client-asset-budget.ts",
     "preview": "bun --bun astro preview",
     "start": "bun ./dist/server/entry.mjs",
     "db:migrate": "bun scripts/db-migrate.ts",
@@ -51,11 +52,15 @@
     "form-drafts:purge": "bun scripts/form-draft-purge.ts",
     "site-search:reconcile": "bun scripts/site-search-reconcile.ts",
     "idn-regions:import": "bun scripts/idn-regions-import.ts",
+    "idn-regions:activate": "bun scripts/idn-regions-activate.ts",
+    "idn-regions:rollback": "bun scripts/idn-regions-rollback.ts",
     "site-search:sources:check": "bun scripts/site-search-sources-check.ts",
     "comments:resources:check": "bun scripts/comments-resources-check.ts",
     "comments:retention": "bun scripts/comments-retention.ts",
     "tenant-domain:dns:sync": "bun scripts/tenant-domain-dns-sync.ts",
     "edge-cache:surfaces:check": "bun scripts/edge-cache-surfaces-check.ts",
+    "skills:check": "bun scripts/skills-check.ts",
+    "access:chokepoint:check": "bun scripts/access-chokepoint-check.ts",
     "edge-cache:purge": "bun scripts/edge-cache-purge.ts",
     "data-lifecycle:registry:check": "bun scripts/data-lifecycle-registry-check.ts",
     "analytics:rollup": "bun scripts/visitor-analytics-rollup.ts",
@@ -65,6 +70,7 @@
     "email:templates:seed-defaults": "bun scripts/email-templates-seed-defaults.ts",
     "reporting:projections:refresh": "bun scripts/reporting-projections-refresh.ts",
     "reporting:projections:registry:check": "bun scripts/reporting-projection-registry-check.ts",
+    "access:permissions:enforcement:check": "bun scripts/permission-enforcement-check.ts",
     "identity-access:sod-registry:check": "bun scripts/identity-access-sod-registry-check.ts",
     "family:conformance:check": "bun scripts/family-conformance-check.ts",
     "reporting:exports:dispatch": "bun scripts/reporting-exports-dispatch.ts",
@@ -76,6 +82,8 @@
     "openapi:bundle": "bun scripts/openapi-bundle.ts",
     "api:spec:check": "bun scripts/api-spec-check.ts",
     "api:docs:generate": "bun scripts/api-docs-generate.ts",
+    "api:consumer-contract:generate": "bun scripts/api-consumer-contract.ts --generate",
+    "api:consumer-contract:check": "bun scripts/api-consumer-contract.ts",
     "api:docs:check": "bun scripts/api-docs-check.ts",
     "db:pool:health": "bun scripts/db-pool-health.ts",
     "redis:health": "bun scripts/redis-health.ts",
@@ -92,9 +100,14 @@
     "api:tenant-route:check": "bun scripts/tenant-route-factory-check.ts",
     "db:tenant-context:check": "bun scripts/tenant-context-usage-check.ts",
     "db:work-class:generate": "bun scripts/work-class-registry-generate.ts",
+    "db:fk-index:check": "bun scripts/db-fk-index-check.ts",
     "db:work-class:check": "bun scripts/work-class-registry-check.ts",
     "config:env:coverage:check": "bun scripts/env-contract-coverage-check.ts",
     "config:validate": "bun scripts/validate-env.ts",
+    "repo:inventory:generate": "bun scripts/repo-inventory.ts",
+    "repo:inventory:check": "bun scripts/repo-inventory.ts --check",
+    "project-state:inventory:generate": "bun scripts/project-state-inventory.ts",
+    "project-state:inventory:check": "bun scripts/project-state-inventory.ts --check",
     "scripts:inventory:generate": "bun scripts/scripts-inventory.ts",
     "scripts:inventory:check": "bun scripts/scripts-inventory.ts --check",
     "security:readiness": "bun scripts/security-readiness.ts",
@@ -105,22 +118,26 @@
     "test:coverage": "bun test --coverage",
     "test:e2e": "bun --bun playwright test",
     "test:e2e:install": "bun --bun playwright install --with-deps chromium",
-    "check": "bun run lint && bun run check:docs && bun run check:docs:translation && bun run scripts:inventory:check && bun run config:env:coverage:check && bun run api:spec:check && bun run api:docs:check && bun run modules:dag:check && bun run modules:routes:check && bun run modules:table-writes:check && bun run modules:jobs:check && bun run modules:compose:check && bun run modules:composition:inventory:check && bun run reporting:projections:registry:check && bun run identity-access:sod-registry:check && bun run data-lifecycle:registry:check && bun run site-search:sources:check && bun run comments:resources:check && bun run edge-cache:surfaces:check && bun run family:conformance:check && bun run logging:lint:check && bun run api:tenant-route:check && bun run db:tenant-context:check && bun run db:work-class:check && bun run typecheck && bun run test && bun run build",
+    "perf:cwv:lab": "bun --bun playwright test tests/e2e/cwv-lab.e2e.ts",
+    "check": "bun run lint && bun run check:docs && bun run check:docs:translation && bun run scripts:inventory:check && bun run repo:inventory:check && bun run project-state:inventory:check && bun run config:env:coverage:check && bun run api:spec:check && bun run api:docs:check && bun run api:consumer-contract:check && bun run modules:dag:check && bun run modules:routes:check && bun run modules:table-writes:check && bun run modules:jobs:check && bun run modules:compose:check && bun run modules:composition:inventory:check && bun run reporting:projections:registry:check && bun run identity-access:sod-registry:check && bun run access:permissions:enforcement:check && bun run access:chokepoint:check && bun run data-lifecycle:registry:check && bun run site-search:sources:check && bun run comments:resources:check && bun run edge-cache:surfaces:check && bun run skills:check && bun run family:conformance:check && bun run logging:lint:check && bun run api:tenant-route:check && bun run db:tenant-context:check && bun run db:work-class:check && bun run db:fk-index:check && bun run typecheck && bun run test && bun run build",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "changeset:status": "changeset status"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
-    "@playwright/test": "^1.62.0",
+    "@playwright/test": "^1.62.1",
     "@types/bun": "^1.3.14",
     "prettier": "^3.9.6",
     "prettier-plugin-astro": "^0.14.1",
     "typescript": "^7.0.2",
     "yaml": "^2.9.0"
   },
+  "overrides": {
+    "postcss": "^8.5.23"
+  },
   "dependencies": {
-    "@astrojs/node": "^11.0.2",
-    "astro": "^7.1.3"
+    "@astrojs/node": "^11.0.3",
+    "astro": "^7.1.6"
   }
 }

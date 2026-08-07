@@ -23,14 +23,18 @@ lalu membangun duplikatnya.
 
 <!-- Dihasilkan `bun run scripts:inventory:generate`. JANGAN diedit tangan. -->
 
-62 target menjalankan berkas di `scripts/`; 23 di antaranya
+75 target menjalankan berkas di `scripts/`; 30 di antaranya
 ada di rantai `bun run check` (kolom **Gate**), sisanya dijalankan manual,
 terjadwal, atau oleh workflow CI tertentu.
 
 | Target                                   | Skrip                                          | Gate |
 | ---------------------------------------- | ---------------------------------------------- | ---- |
+| `access:chokepoint:check`                | `access-chokepoint-check.ts`                   | ✅   |
+| `access:permissions:enforcement:check`   | `permission-enforcement-check.ts`              | ✅   |
 | `analytics:purge`                        | `visitor-analytics-purge.ts`                   | —    |
 | `analytics:rollup`                       | `visitor-analytics-rollup.ts`                  | —    |
+| `api:consumer-contract:check`            | `api-consumer-contract.ts`                     | ✅   |
+| `api:consumer-contract:generate`         | `api-consumer-contract.ts`                     | —    |
 | `api:docs:check`                         | `api-docs-check.ts`                            | ✅   |
 | `api:docs:generate`                      | `api-docs-generate.ts`                         | —    |
 | `api:spec:check`                         | `api-spec-check.ts`                            | ✅   |
@@ -38,6 +42,7 @@ terjadwal, atau oleh workflow CI tertentu.
 | `blog:ads:drop-readiness`                | `blog-ads-drop-readiness.ts`                   | —    |
 | `blog:ads:ingest`                        | `blog-ads-ingest.ts`                           | —    |
 | `blog:publish:scheduled`                 | `blog-scheduled-publish.ts`                    | —    |
+| `build:asset-budget:check`               | `client-asset-budget.ts`                       | —    |
 | `changesets:policy:check`                | `changeset-policy-check.ts`                    | —    |
 | `check:docs`                             | `check-docs.mjs`                               | ✅   |
 | `check:docs:translation`                 | `check-docs-translation.mjs`                   | ✅   |
@@ -47,6 +52,7 @@ terjadwal, atau oleh workflow CI tertentu.
 | `config:validate`                        | `validate-env.ts`                              | —    |
 | `data-lifecycle:archive-purge`           | `data-lifecycle-archive-purge.ts`              | —    |
 | `data-lifecycle:registry:check`          | `data-lifecycle-registry-check.ts`             | ✅   |
+| `db:fk-index:check`                      | `db-fk-index-check.ts`                         | ✅   |
 | `db:migrate`                             | `db-migrate.ts`                                | —    |
 | `db:pool:health`                         | `db-pool-health.ts`                            | —    |
 | `db:tenant-context:check`                | `tenant-context-usage-check.ts`                | ✅   |
@@ -63,7 +69,9 @@ terjadwal, atau oleh workflow CI tertentu.
 | `identity-access:business-scope:expiry`  | `identity-access-business-scope-expiry.ts`     | —    |
 | `identity-access:permissions:backfill`   | `identity-access-owner-permission-backfill.ts` | —    |
 | `identity-access:sod-registry:check`     | `identity-access-sod-registry-check.ts`        | ✅   |
+| `idn-regions:activate`                   | `idn-regions-activate.ts`                      | —    |
 | `idn-regions:import`                     | `idn-regions-import.ts`                        | —    |
+| `idn-regions:rollback`                   | `idn-regions-rollback.ts`                      | —    |
 | `logging:lint:check`                     | `logging-lint-check.ts`                        | ✅   |
 | `logs:audit:purge`                       | `audit-log-purge.ts`                           | —    |
 | `memory:docs:check`                      | `sync-agent-memory.ts`                         | —    |
@@ -78,8 +86,12 @@ terjadwal, atau oleh workflow CI tertentu.
 | `modules:table-writes:check`             | `table-write-ownership-check.ts`               | ✅   |
 | `news-media:reconcile`                   | `news-media-r2-reconcile.ts`                   | —    |
 | `openapi:bundle`                         | `openapi-bundle.ts`                            | —    |
+| `project-state:inventory:check`          | `project-state-inventory.ts`                   | ✅   |
+| `project-state:inventory:generate`       | `project-state-inventory.ts`                   | —    |
 | `redis:health`                           | `redis-health.ts`                              | —    |
 | `release:verify`                         | `release-verify.ts`                            | —    |
+| `repo:inventory:check`                   | `repo-inventory.ts`                            | ✅   |
+| `repo:inventory:generate`                | `repo-inventory.ts`                            | —    |
 | `reporting:exports:dispatch`             | `reporting-exports-dispatch.ts`                | —    |
 | `reporting:projections:refresh`          | `reporting-projections-refresh.ts`             | —    |
 | `reporting:projections:registry:check`   | `reporting-projection-registry-check.ts`       | ✅   |
@@ -88,6 +100,7 @@ terjadwal, atau oleh workflow CI tertentu.
 | `security:readiness`                     | `security-readiness.ts`                        | —    |
 | `site-search:reconcile`                  | `site-search-reconcile.ts`                     | —    |
 | `site-search:sources:check`              | `site-search-sources-check.ts`                 | ✅   |
+| `skills:check`                           | `skills-check.ts`                              | ✅   |
 | `sync:objects:dispatch`                  | `object-sync-dispatch.ts`                      | —    |
 | `tenant-domain:dns:sync`                 | `tenant-domain-dns-sync.ts`                    | —    |
 | `workflow:escalations:dispatch`          | `workflow-escalations-dispatch.ts`             | —    |
@@ -140,14 +153,13 @@ menjalankan target `modules:sync` — perintah yang tak pernah ada di repo ini
 (mekanisme sesungguhnya `POST /api/v1/modules/sync`) — sementara `bun run check`
 tetap hijau karena gate lamanya hanya membaca lima berkas markdown akar.
 
-| Target acuan                                    | Prasyarat yang belum ada                                                    |
-| ----------------------------------------------- | --------------------------------------------------------------------------- |
-| `repo:inventory:generate` / `:check`            | Generator inventaris repo lintas-artefak (OpenAPI + komposisi modul + docs) |
-| `config:docs:check`                             | Rekonsiliasi tiga-arah `.env.example` ↔ doc 18 ↔ `validate-env.ts`          |
-| `i18n:extract` / `:pot:check` / `:parity:check` | Setup i18n (`.po`/`.pot`) + UI                                              |
-| `database:capacity:check`                       | Validasi kapasitas lintas-instance (preflight)                              |
-| `production:preflight`, `resilience:dr-drill`   | Mengagregasi gate di atas + server berjalan                                 |
-| `performance:*`                                 | Harness beban + environment berukuran produksi                              |
+| Target acuan                                    | Prasyarat yang belum ada                                           |
+| ----------------------------------------------- | ------------------------------------------------------------------ |
+| `config:docs:check`                             | Rekonsiliasi tiga-arah `.env.example` ↔ doc 18 ↔ `validate-env.ts` |
+| `i18n:extract` / `:pot:check` / `:parity:check` | Setup i18n (`.po`/`.pot`) + UI                                     |
+| `database:capacity:check`                       | Validasi kapasitas lintas-instance (preflight)                     |
+| `production:preflight`, `resilience:dr-drill`   | Mengagregasi gate di atas + server berjalan                        |
+| `performance:*`                                 | Harness beban + environment berukuran produksi                     |
 
 Lihat peta sprint di
 [`docs/awcms/11_implementation_blueprint.md`](../docs/awcms/11_implementation_blueprint.md)
